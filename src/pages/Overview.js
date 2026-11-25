@@ -201,7 +201,7 @@ function Attention({ items }) {
   const navigate = useNavigate();
   return (
     <Card title={<span className="flex items-center gap-2"><Icon name="alert" size={14} className="text-danger" />Requires attention</span>}
-      subtitle="Highest-impact open issues, ranked automatically" padded={false} className="h-full">
+      subtitle="Highest-impact open issues, ranked automatically" padded={false}>
       {items.length === 0 && <p className="text-xs text-fg-faint p-4">No open issues.</p>}
       <div className="divide-y divide-line max-h-[420px] overflow-y-auto">
         {items.map((a) => (
@@ -234,7 +234,7 @@ function TwinCard({ onOpen }) {
   const onFloor = fs.reduce((a, f) => a + f.badges.on_floor, 0);
   const away = fs.reduce((a, f) => a + f.badges.away, 0);
   return (
-    <Card className="xl:col-span-2"
+    <Card
       title={<span className="flex items-center gap-2"><Icon name="globe" size={15} className="text-primary" />Digital twin · US manufacturing network</span>}
       subtitle="Live plant status and loads on the road. Open a plant for its top-view twin with every station, pillow count and RFID-tracked operator."
       actions={<Button size="sm" icon="map" onClick={() => onOpen('us')}>Open digital twin</Button>}>
@@ -293,29 +293,36 @@ export default function Overview() {
       {data && (
         <>
           <KpiGrid k={data.kpis} onOpen={setDrawer} navigate={navigate} />
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <TwinCard onOpen={openTwin} />
-            <SiapAdvisoriesCard factory={filters.factory} limit={4} compact title="S!AP advisories"
-              subtitle="Machine-repair predictions, quality risk and RFID workforce patterns · illustrative models on simulated data" />
-          </div>
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <ChartCard className="xl:col-span-2" title="Production performance — hourly actual vs target" type="bar" legend height={260}
-              subtitle="Pillows completed each hour; target follows the shift calendar (breaks and lunch excluded)"
-              data={{
-                labels: data.hourly.map((h) => h.hour),
-                datasets: [
-                  { label: 'Target', data: data.hourly.map((h) => h.planned), color: 'chart-8' },
-                  { label: 'Actual', data: data.hourly.map((h) => h.actual), color: data.hourly.map((h) => (
-                    h.actual == null || h.hour.slice(0, 2) === data.sim_time.slice(11, 13) ? 'info'   // hour in progress
-                      : h.actual >= h.planned * 0.95 ? 'success' : h.actual >= h.planned * 0.85 ? 'warning' : 'danger')) },
-                ],
-              }} />
-            <Attention items={data.attention} />
-          </div>
-          <Lifecycle stages={data.lifecycle} />
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <Comparison rows={data.comparison} />
-            <InsightsCard page="overview" limit={5} title="Operational recommendations" />
+          {/* xl: two independent columns, so each card keeps its content height instead of
+              stretching to a taller neighbour (the S!AP list). Below xl the column wrappers
+              dissolve (display: contents) and `order` keeps the original stacking order. */}
+          <div className="flex flex-col gap-4 xl:grid xl:grid-cols-3 xl:items-start">
+            <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-2 xl:min-w-0">
+              <div className="order-1 xl:order-none min-w-0"><TwinCard onOpen={openTwin} /></div>
+              <div className="order-3 xl:order-none min-w-0">
+                <ChartCard title="Production performance — hourly actual vs target" type="bar" legend height={260}
+                  subtitle="Pillows completed each hour; target follows the shift calendar (breaks and lunch excluded)"
+                  data={{
+                    labels: data.hourly.map((h) => h.hour),
+                    datasets: [
+                      { label: 'Target', data: data.hourly.map((h) => h.planned), color: 'chart-8' },
+                      { label: 'Actual', data: data.hourly.map((h) => h.actual), color: data.hourly.map((h) => (
+                        h.actual == null || h.hour.slice(0, 2) === data.sim_time.slice(11, 13) ? 'info'   // hour in progress
+                          : h.actual >= h.planned * 0.95 ? 'success' : h.actual >= h.planned * 0.85 ? 'warning' : 'danger')) },
+                    ],
+                  }} />
+              </div>
+              <div className="order-5 xl:order-none min-w-0"><Lifecycle stages={data.lifecycle} /></div>
+              <div className="order-6 xl:order-none min-w-0"><Comparison rows={data.comparison} /></div>
+              <div className="order-7 xl:order-none min-w-0"><InsightsCard page="overview" limit={5} title="Operational recommendations" /></div>
+            </div>
+            <div className="contents xl:flex xl:flex-col xl:gap-4 xl:min-w-0">
+              <div className="order-2 xl:order-none min-w-0">
+                <SiapAdvisoriesCard factory={filters.factory} limit={4} compact title="S!AP advisories"
+                  subtitle="Machine-repair predictions, quality risk and RFID workforce patterns · illustrative models on simulated data" />
+              </div>
+              <div className="order-4 xl:order-none min-w-0"><Attention items={data.attention} /></div>
+            </div>
           </div>
           {drawer && <KpiDrawer kind={drawer} data={data} onClose={() => setDrawer(null)} />}
         </>

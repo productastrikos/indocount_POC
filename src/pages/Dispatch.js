@@ -10,12 +10,14 @@ import { useApi } from '../hooks/useApi';
 import { useApp } from '../data/DataProvider';
 import { patch, post } from '../api/client';
 import { dateShort, dateTime, dayTime, duration, hhmm, money, num, parseTs, pct } from '../utils';
+import CctvWall from '../components/cctv/CctvWall';
 
 const TABS = [
   { value: 'orders', label: 'Customer orders' },
   { value: 'schedule', label: 'Truck & dock schedule' },
   { value: 'risk', label: 'Shipment risk' },
   { value: 'detention', label: 'Detention costs' },
+  { value: 'cctv', label: 'Dispatch lane CCTV' },
 ];
 const ORDER_STATUSES = ['Not Ready', 'Production Pending', 'Quality Pending', 'Inventory Pending', 'Picking Pending',
   'Ready for Dispatch', 'Dispatched', 'Delivered'];
@@ -752,12 +754,17 @@ export default function Dispatch() {
         </div>
       )}
       <Tabs variant="underline" tabs={TABS} value={tab} onChange={setTab} />
-      <div className="grid grid-cols-1 2xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 2xl:grid-cols-4 gap-4 items-start">
         <div className="2xl:col-span-3 min-w-0">
           {tab === 'orders' && <OrdersTab factory={factory} customer={filters.customer} onOpen={setOrderId} />}
           {tab === 'schedule' && <ScheduleTab factory={factory} simTime={sim?.sim_time} freeMin={freeMin} focusTruck={focusTruck} onOpenOrder={setOrderId} />}
           {tab === 'risk' && <RiskTab factory={factory} customer={filters.customer} onOpen={setOrderId} />}
           {tab === 'detention' && <DetentionTab factory={factory} onOpen={setOrderId} />}
+          {tab === 'cctv' && (
+            <Card title="Dispatch lane CCTV" subtitle="Cartons verified by label OCR before loading · people tracked with RFID identity">
+              <CctvWall factory={factory} filter={(f) => f.camera.endsWith('-06') || f.camera.endsWith('-04') || f.camera.endsWith('-05')} cols={3} />
+            </Card>
+          )}
         </div>
         <InsightsCard page="dispatch" limit={5} onAction={onInsight} />
       </div>

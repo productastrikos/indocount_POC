@@ -35,8 +35,16 @@ def log_event(db: Session, ts, factory_id, stage, event_type, message, entity_ty
 
 
 def next_number(db: Session, model, prefix: str, start: int = 1000, width: int = 0) -> str:
+    """The next document number (prefix + start + id), skipping any number that is
+    already taken (e.g. by seeded records numbered outside the start + id pattern),
+    so a collision can never stall the simulation on a unique constraint."""
     n = (db.scalar(select(func.max(model.id))) or 0) + start + 1
-    return f"{prefix}{str(n).zfill(width) if width else n}"
+    col = next((getattr(model, c) for c in ("number", "ref", "code") if hasattr(model, c)), None)
+    while True:
+        value = f"{prefix}{str(n).zfill(width) if width else n}"
+        if col is None or db.scalar(select(model.id).where(col == value).limit(1)) is None:
+            return value
+        n += 1
 
 
 def get_setting(db: Session, key: str, default=None):

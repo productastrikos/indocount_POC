@@ -712,7 +712,8 @@ def maybe_new_order(ctx: TickCtx, factory) -> None:
     line_day = max(1.0, min(ln.planned_rate for ln in ctx.lines if ln.factory_id == factory.id) * 15)
     lead_days = max(RNG.randint(2, 5), int(qty / line_day) + 3)  # quote a feasible ship date
     ship = datetime.combine((ctx.b + timedelta(days=lead_days)).date(), time(RNG.choice([8, 10, 13, 15]), 0))
-    o = m.CustomerOrder(number=next_number(db, m.CustomerOrder, "ORD-", 0), customer_id=sku.customer_id,
+    # Provisional number = the final ORD-{500 + id}; always above the seeded ORD-496…543 range.
+    o = m.CustomerOrder(number=next_number(db, m.CustomerOrder, "ORD-", 500), customer_id=sku.customer_id,
                         factory_id=factory.id, sku_id=sku.id, qty=qty, order_date=ctx.b,
                         ship_window_start=ship - timedelta(days=21), ship_window_end=ship + timedelta(days=7),
                         scheduled_dispatch=ship, priority=RNG.choice(["High", "Medium", "Medium", "Low"]))

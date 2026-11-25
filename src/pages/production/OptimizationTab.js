@@ -99,7 +99,7 @@ export default function OptimizationTab({ factory, presetFactoryId, focusRunId }
             <Kpi label="Avg completion" value={`${num(a.avg_completion_h, 1)} h`} sub={`Was ${num(b.avg_completion_h, 1)} h from now`} />
             <Kpi label="All orders complete" value={dayTime(a.makespan)} sub={`Was ${dayTime(b.makespan)}`} />
           </div>
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
             <Card title="Current vs optimized">
               <MiniChart type="bar" legend height={220} data={{
                 labels: ['Late orders', 'Delay (h)', 'Changeovers'],

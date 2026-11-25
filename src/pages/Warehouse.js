@@ -9,6 +9,7 @@ import { useApi, useFocus } from '../hooks/useApi';
 import { useApp } from '../data/DataProvider';
 import { api, post } from '../api/client';
 import { compact, dateTime, dayTime, linkTo, num, pct } from '../utils';
+import CctvWall from '../components/cctv/CctvWall';
 
 const TABS = [
   { value: 'layout', label: 'Warehouse layout' },
@@ -16,6 +17,7 @@ const TABS = [
   { value: 'allocation', label: 'Inventory allocation' },
   { value: 'picking', label: 'Picking' },
   { value: 'workload', label: 'Workload & workforce' },
+  { value: 'cctv', label: 'Staging CCTV' },
 ];
 
 /* ─── Layout ──────────────────────────────────────────────────────────── */
@@ -699,7 +701,7 @@ export default function Warehouse() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 items-start">
         <Card className="xl:col-span-3" padded={false}>
           <div className="px-4 pt-1"><Tabs tabs={TABS} value={tab} onChange={setTab} variant="underline" /></div>
           {tab === 'layout' && <LayoutTab onPick={setLocId} selected={locId} />}
@@ -707,6 +709,12 @@ export default function Warehouse() {
           {tab === 'allocation' && <AllocationTab onOrder={setOrderId} />}
           {tab === 'picking' && <PickingTab onOrder={setOrderId} />}
           {tab === 'workload' && <WorkloadTab initialSku={skuFocus} />}
+          {tab === 'cctv' && (
+            <div className="p-4">
+              <p className="text-xs text-fg-muted mb-3">Final-inspection and carton-staging cameras: people tracked and identified by RFID badge, carton print read by OCR before put-away and loading.</p>
+              <CctvWall factory={filters.factory} filter={(f) => f.camera.endsWith('-06')} cols={3} />
+            </div>
+          )}
         </Card>
         <div className="space-y-4">
           <InsightsCard page="warehouse" limit={6} onAction={onInsight} />

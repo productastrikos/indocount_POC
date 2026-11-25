@@ -61,7 +61,7 @@ export function Loading({ rows = 3, height = 18 }) {
 
 export function Empty({ children = 'Nothing to show.', icon = 'check' }) {
   return (
-    <div className="flex flex-col items-center justify-center py-8 text-center text-xs text-fg-faint gap-2">
+    <div className="flex flex-col items-center justify-center py-6 px-4 text-center text-xs text-fg-faint gap-2">
       <Icon name={icon} size={20} />
       {children}
     </div>

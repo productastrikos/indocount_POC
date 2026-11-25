@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Badge, Card, Icon, ProgressBar, Tabs } from '../components/ui';
 import { ErrorBox, InsightsCard, Kpi, Loading, PageTitle, StageAlerts, StatusBadge } from '../components/common';
@@ -14,11 +14,16 @@ import WorkforceTab from './production/WorkforceTab';
 import ChangeoversTab from './production/ChangeoversTab';
 import OptimizationTab from './production/OptimizationTab';
 import { STAGE_TONE } from './production/shared';
+import CctvTab from './production/CctvTab';
+
+const FactoryTwinTab = lazy(() => import('./production/FactoryTwinTab'));
 
 const TABS = [
   { value: 'lines', label: 'Production lines' },
+  { value: 'twin', label: 'Digital twin' },
   { value: 'orders', label: 'Production orders' },
   { value: 'monitoring', label: 'Live monitoring' },
+  { value: 'cctv', label: 'CCTV · Vision AI' },
   { value: 'machines', label: 'Machine health' },
   { value: 'predictive', label: 'Predictive maintenance' },
   { value: 'workforce', label: 'Workforce' },
@@ -73,7 +78,7 @@ function StageDetail({ stage, pipe, lines, onOpenLine }) {
       subtitle={s ? `${num(s.qty)} ${s.unit} vs ${num(s.target)} planned to date · stage capacity ${pct(s.efficiency_pct)}`
         : pipe.bottleneck ? `Bottleneck: ${pipe.bottleneck}. Binding constraint per line below.` : 'No stage is constraining output by more than 8%.'}
       actions={s && <StatusBadge status={s.bottleneck ? 'Bottleneck' : s.status} tone={STAGE_TONE[s.bottleneck ? 'Bottleneck' : s.status]} />}
-      padded={false} className="h-full">
+      padded={false}>
       {s && (s.down_lines.length > 0 || s.changeover_lines.length > 0) && (
         <div className="px-4 pt-3 flex flex-wrap gap-2">
           {s.down_lines.map((n) => <Badge key={n} tone="danger" dot>{n} stopped</Badge>)}
@@ -134,6 +139,20 @@ export default function Production() {
   const clearFocus = () => { if (location.search) navigate(location.pathname, { replace: true }); };
   const close = (setter) => () => { setter(null); clearFocus(); };
 
+  // the page's digital twin card opens the full twin tab on the same plant and stage
+  const tabsRef = useRef(null);
+  const [twinStart, setTwinStart] = useState(null);
+  const openTwin = (plant, stageKey) => {
+    setTwinStart({ plant, stage: stageKey, n: Date.now() });
+    setTab('twin');
+    requestAnimationFrame(() => tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+  const twinCard = tab !== 'twin' && (
+    <Suspense fallback={<Card title="Digital twin · pillow plant"><Loading rows={4} height={60} /></Card>}>
+      <FactoryTwinTab compact factory={factory} onExpand={openTwin} onOpenLine={setLineId} onOpenMachine={setMachineId} />
+    </Suspense>
+  );
+
   const onInsightAction = (action) => {
     if (action.type === 'optimize') {
       setOptFactory(action.payload?.factory_id || null);
@@ -181,22 +200,35 @@ export default function Production() {
 
           <Pipeline stages={s.pipeline.stages} selected={stage} onSelect={setStage} />
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <div className="xl:col-span-2">
+          {/* items-start: each card keeps its content height; the stage alerts sit under the
+              constraint list so the left column is not left empty beside the advisories. */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
+            <div className="xl:col-span-2 space-y-4 min-w-0">
+              {twinCard}
               <StageDetail stage={stage} pipe={s.pipeline} lines={lines.data} onOpenLine={setLineId} />
+              <StageAlerts stage="production" limit={4} />
             </div>
             <InsightsCard page="production" limit={4} compact onAction={onInsightAction} />
           </div>
         </>
       )}
 
-      <StageAlerts stage="production" limit={4} />
+      {!s && <StageAlerts stage="production" limit={4} />}
 
-      <Tabs tabs={TABS} value={tab} onChange={setTab} variant="underline" />
+      <div ref={tabsRef} style={{ scrollMarginTop: 72 }}>
+        <Tabs tabs={TABS} value={tab} onChange={setTab} variant="underline" />
+      </div>
       <div>
         {tab === 'lines' && <LinesTab lines={lines.data} factories={factories} onOpen={setLineId} />}
+        {tab === 'twin' && (
+          <Suspense fallback={<Loading rows={6} />}>
+            <FactoryTwinTab key={twinStart?.n || 'twin'} factory={factory} initialPlant={twinStart?.plant} initialStage={twinStart?.stage}
+              onOpenLine={setLineId} onOpenMachine={setMachineId} />
+          </Suspense>
+        )}
         {tab === 'orders' && <OrdersTab orders={orders.data} onOpen={setOrderId} />}
         {tab === 'monitoring' && <MonitoringTab factory={factory} date={date} shift={shift} downtime={s?.downtime} onOpenLine={setLineId} />}
+        {tab === 'cctv' && <CctvTab factory={factory} />}
         {tab === 'machines' && <MachinesTab factory={factory} onOpen={setMachineId} />}
         {tab === 'predictive' && <PredictiveTab factory={factory} onOpenMachine={setMachineId} />}
         {tab === 'workforce' && <WorkforceTab factory={factory} date={date} shift={shift} highlight={highlightEmp} />}

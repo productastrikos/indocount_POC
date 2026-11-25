@@ -1,0 +1,201 @@
+/* Production digital twin. The viewport keeps the control-room look of the
+   facility canvas (dark scene, cyan glass panels); the stage strip below it
+   follows the app theme. */
+.ftw-view {
+  position: relative;
+  height: clamp(500px, 68vh, 760px);
+  background: radial-gradient(1100px 560px at 40% 0%, #10203d 0%, #070d1a 62%), #070d1a;
+  border-radius: 12px;
+  overflow: hidden;
+  color: #e6f1ff;
+  font-family: var(--font-sans);
+}
+.ftw-canvas { position: absolute; inset: 0; z-index: 1; }   /* contains the CSS2D label z-indices below the overlays */
+.ftw-canvas canvas { outline: none; cursor: grab; }
+.ftw-glass {
+  background: linear-gradient(135deg, rgba(16, 24, 46, 0.93) 0%, rgba(12, 44, 86, 0.86) 100%);
+  border: 1px solid rgba(0, 212, 255, 0.42);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 212, 255, 0.16), inset 0 0 18px rgba(0, 212, 255, 0.06);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.ftw-h {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: #00d4ff; text-shadow: 0 0 10px rgba(0, 212, 255, 0.55); margin: 0 0 6px;
+}
+.ftw-sub { font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #7fb3d5; font-weight: 600; margin: 8px 0 5px; }
+
+/* control panel */
+.ftw-controls { position: absolute; top: 12px; left: 12px; width: 212px; padding: 10px 10px 8px; z-index: 6; }
+.ftw-controls.is-collapsed { width: auto; padding: 6px 8px; }
+.ftw-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.ftw-btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  height: 27px; padding: 0 8px; border-radius: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: #fff; white-space: nowrap;
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.2), rgba(41, 128, 185, 0.3));
+  border: 1px solid rgba(0, 212, 255, 0.38); transition: all 0.18s ease;
+}
+.ftw-btn:hover { border-color: #00d4ff; box-shadow: 0 3px 12px rgba(0, 212, 255, 0.4); transform: translateY(-1px); }
+.ftw-btn.is-active {
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.62), rgba(0, 136, 255, 0.72));
+  border-color: #00d4ff; box-shadow: 0 0 16px rgba(0, 212, 255, 0.7);
+}
+.ftw-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; box-shadow: none; }
+.ftw-toggles { display: flex; flex-wrap: wrap; gap: 4px; }
+.ftw-toggle {
+  font-size: 10.5px; padding: 2px 8px; border-radius: 999px; color: #b6d4f0;
+  border: 1px solid rgba(0, 212, 255, 0.28); background: rgba(0, 212, 255, 0.05);
+}
+.ftw-toggle.is-on { color: #04121f; background: #00d4ff; border-color: #00d4ff; font-weight: 700; }
+.ftw-select {
+  height: 27px; border-radius: 6px; padding: 0 6px; font-size: 11px; color: #fff;
+  background: rgba(10, 20, 40, 0.9); border: 1px solid rgba(0, 212, 255, 0.38);
+}
+.ftw-hint { font-size: 10px; color: #7fb3d5; margin-top: 7px; line-height: 1.45; }
+
+/* facility info panel */
+.ftw-info { position: absolute; left: 12px; bottom: 12px; width: 336px; padding: 9px; z-index: 5; }
+.ftw-info-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ftw-info-item { background: linear-gradient(135deg, rgba(0, 212, 255, 0.08), rgba(0, 136, 255, 0.13)); border: 1px solid rgba(0, 212, 255, 0.22); border-radius: 8px; padding: 4px 6px; min-width: 0; }
+.ftw-info-item span { display: block; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: #7fb3d5; font-weight: 600; }
+.ftw-info-item b { display: block; font-size: 12.5px; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ftw-info-item i { display: block; font-style: normal; font-size: 9.5px; color: #9cc3e4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ftw-bar { height: 4px; border-radius: 4px; background: rgba(148, 186, 255, 0.18); overflow: hidden; margin-top: 4px; }
+.ftw-bar > span { display: block; height: 100%; background: linear-gradient(90deg, #00d4ff, #22c55e); }
+
+/* stage detail panel */
+.ftw-detail { position: absolute; top: 12px; right: 12px; bottom: 12px; width: 352px; z-index: 6; display: flex; flex-direction: column; }
+.ftw-detail-head { padding: 12px 12px 10px; border-bottom: 1px solid rgba(0, 212, 255, 0.2); }
+.ftw-detail-body { padding: 10px 12px 12px; overflow-y: auto; flex: 1; min-height: 0; }
+.ftw-detail-body::-webkit-scrollbar { width: 7px; }
+.ftw-detail-body::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #00d4ff, #0088ff); border-radius: 4px; }
+.ftw-num {
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800;
+  color: #04121f; background: var(--c, #00d4ff); box-shadow: 0 0 14px var(--c, #00d4ff); flex-shrink: 0;
+}
+.ftw-kv { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.ftw-kv div { background: rgba(0, 212, 255, 0.07); border: 1px solid rgba(0, 212, 255, 0.16); border-radius: 8px; padding: 5px 8px; min-width: 0; }
+.ftw-kv span { display: block; font-size: 9.5px; color: #7fb3d5; text-transform: uppercase; letter-spacing: 0.06em; }
+.ftw-kv b { display: block; font-size: 13.5px; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ftw-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 5px 6px; border-radius: 7px; font-size: 11.5px; color: #dbeafe; }
+.ftw-row:hover { background: rgba(0, 212, 255, 0.1); }
+.ftw-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ftw-risk { border-left: 3px solid var(--c, #f59e0b); background: rgba(255, 255, 255, 0.03); border-radius: 6px; padding: 6px 8px; font-size: 11.5px; color: #dbeafe; }
+.ftw-risk small { display: block; color: #9cc3e4; font-size: 10.5px; margin-top: 2px; line-height: 1.35; }
+.ftw-tag { font-size: 9px; font-weight: 700; letter-spacing: 0.06em; padding: 1px 5px; border-radius: 4px; background: rgba(0, 212, 255, 0.16); color: #7dd3fc; margin-right: 5px; }
+.ftw-actions li { font-size: 11.5px; color: #dbeafe; line-height: 1.45; margin-left: 14px; list-style: disc; }
+.ftw-close { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; color: #b6d4f0; }
+.ftw-close:hover { background: rgba(0, 212, 255, 0.15); color: #fff; }
+
+/* walkthrough caption */
+.ftw-caption { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: min(470px, calc(100% - 620px)); min-width: 300px; padding: 9px 12px; z-index: 5; }
+.ftw-caption p { font-size: 11.5px; color: #cfe3f7; line-height: 1.4; margin-top: 3px; }
+.ftw-steps { display: flex; gap: 3px; margin-top: 7px; }
+.ftw-steps i { flex: 1; height: 4px; border-radius: 3px; background: rgba(148, 186, 255, 0.2); }
+.ftw-steps i.is-done { background: #22c55e; }
+.ftw-steps i.is-now { background: var(--c, #00d4ff); box-shadow: 0 0 8px var(--c, #00d4ff); }
+
+.ftw-tooltip { position: fixed; z-index: 60; pointer-events: none; padding: 7px 10px; font-size: 11.5px; max-width: 280px; transform: translate(14px, 14px); }
+.ftw-tooltip b { color: #fff; }
+.ftw-tooltip span { display: block; color: #9cc3e4; font-size: 10.5px; }
+.ftw-loading { position: absolute; inset: 0; display: grid; place-items: center; color: #7fb3d5; font-size: 13px; }
+
+/* CSS2D labels in the scene */
+.ftw-marker {
+  --c: #00d4ff;
+  display: flex; align-items: center; gap: 6px; white-space: nowrap; padding: 4px 9px 4px 4px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 700; color: #fff; letter-spacing: 0.02em;
+  background: linear-gradient(135deg, rgba(8, 14, 28, 0.92), rgba(8, 14, 28, 0.78));
+  border: 1px solid var(--c); box-shadow: 0 0 14px color-mix(in srgb, var(--c) 45%, transparent);
+  transition: transform 0.15s, opacity 0.2s; position: relative;
+}
+.ftw-marker:hover { transform: scale(1.06); z-index: 10; }
+.ftw-marker-num { width: 19px; height: 19px; border-radius: 50%; display: grid; place-items: center; font-size: 10.5px; font-weight: 800; color: #04121f; background: var(--c); }
+.ftw-marker-desc {
+  display: none; position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); width: 240px; white-space: normal;
+  font-size: 10.5px; font-weight: 500; line-height: 1.4; color: #cfe3f7; padding: 7px 9px; border-radius: 8px;
+  background: rgba(8, 14, 28, 0.95); border: 1px solid var(--c);
+}
+.ftw-marker:hover .ftw-marker-desc { display: block; }
+.ftw-marker.is-support { font-size: 10px; padding: 2px 8px 2px 3px; opacity: 0.8; }
+.ftw-marker.is-support .ftw-marker-num { width: 14px; height: 14px; font-size: 8px; }
+.ftw-marker.is-active { transform: scale(1.15); box-shadow: 0 0 22px var(--c); background: color-mix(in srgb, var(--c) 30%, #08101e); }
+.ftw-marker.is-dim { opacity: 0.35; }
+.ftw-view.is-top .ftw-marker-name { display: none; }
+.ftw-view.is-top .ftw-marker { padding: 3px; }
+.ftw-line {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 11px; color: #e2e8f0; padding: 3px 8px;
+  border-radius: 7px; background: rgba(8, 15, 28, 0.86); border: 1px solid rgba(96, 165, 250, 0.3);
+}
+.ftw-line:hover { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25); }
+.ftw-line i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.ftw-line-sub { display: none; color: #94a3b8; font-size: 10px; font-variant-numeric: tabular-nums; }
+.ftw-line:hover .ftw-line-sub, .ftw-view.is-lines .ftw-line-sub { display: inline; }
+.ftw-line.is-dim { opacity: 0.4; }
+.ftw-dock {
+  font-size: 10.5px; color: #cbd5e1; white-space: nowrap; padding: 3px 8px; border-radius: 7px; line-height: 1.25;
+  background: rgba(8, 15, 28, 0.85); border: 1px solid rgba(148, 163, 184, 0.3);
+}
+.ftw-dock b { color: #fff; margin-right: 3px; }
+.ftw-dock span { display: block; color: #94a3b8; font-size: 9.5px; }
+.ftw-dock.is-busy { border-color: rgba(34, 197, 94, 0.7); }
+.ftw-token {
+  --c: #00d4ff; font-size: 11px; font-weight: 700; color: #04121f; background: var(--c); padding: 2px 8px; border-radius: 999px;
+  white-space: nowrap; box-shadow: 0 0 14px var(--c);
+}
+
+/* stage strip (app theme) */
+.ftw-strip { display: grid; grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 6px; }
+@media (max-width: 1400px) { .ftw-strip { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .ftw-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ftw-stage {
+  --c: var(--color-primary);
+  position: relative; text-align: left; padding: 7px 8px 7px; border-radius: 10px; min-width: 0;
+  background: var(--color-surface-raised); border: 1px solid var(--color-border); transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.ftw-stage:hover { border-color: var(--c); transform: translateY(-1px); }
+.ftw-stage.is-active { border-color: var(--c); box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 35%, transparent); }
+.ftw-stage-top { display: flex; align-items: center; gap: 6px; }
+.ftw-stage-n { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 800; color: #fff; background: var(--c); flex-shrink: 0; }
+.ftw-stage-name { font-size: 11px; font-weight: 700; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ftw-stage-stat { font-size: 10.5px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.ftw-stage-bottom { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-top: 4px; }
+.ftw-stage .ftw-arrow { position: absolute; right: -6px; top: 50%; transform: translateY(-50%); color: var(--color-text-faint); font-size: 9px; z-index: 1; }
+.ftw-pill { font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; letter-spacing: 0.03em; }
+.ftw-pill.t-info { background: rgba(56, 189, 248, 0.15); color: #0ea5e9; }
+.ftw-pill.t-success { background: rgba(34, 197, 94, 0.15); color: #16a34a; }
+.ftw-pill.t-warning { background: rgba(245, 158, 11, 0.18); color: #d97706; }
+.ftw-pill.t-danger { background: rgba(239, 68, 68, 0.16); color: #dc2626; }
+.ftw-pill.t-neutral { background: rgba(148, 163, 184, 0.18); color: var(--color-text-muted); }
+.ftw-seg { display: inline-flex; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+.ftw-seg button { font-size: 11.5px; font-weight: 600; padding: 4px 10px; color: var(--color-text-muted); }
+.ftw-seg button.is-on { background: var(--color-primary); color: var(--color-on-primary); }
+
+/* collision pass in plantScene.js hides labels that would overlap a more important one */
+.ftw-occluded { visibility: hidden; }
+
+/* compact card on the Production page */
+.ftw-view.is-compact { height: clamp(300px, 40vh, 380px); }
+.ftw-view.is-compact .ftw-detail { width: 300px; top: 8px; right: 8px; bottom: 8px; }
+.ftw-mini {
+  position: absolute; left: 10px; bottom: 10px; z-index: 5; display: flex; flex-wrap: wrap; gap: 4px 14px;
+  padding: 6px 11px; font-size: 11px; color: #a9c9e6; max-width: calc(100% - 20px);
+}
+.ftw-mini b { color: #fff; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ftw-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.ftw-chip {
+  --c: var(--color-primary);
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 2px; border-radius: 999px;
+  border: 1px solid var(--color-border); background: var(--color-surface-raised); color: var(--color-text);
+  font-size: 11px; font-weight: 600; white-space: nowrap; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ftw-chip:hover { border-color: var(--c); }
+.ftw-chip.is-active { border-color: var(--c); box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 35%, transparent); }
+.ftw-chip-n { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 9.5px; font-weight: 800; color: #fff; background: var(--c); }
+.ftw-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: #94a3b8; }
+.ftw-chip-dot.t-success { background: #22c55e; }
+.ftw-chip-dot.t-info { background: #38bdf8; }
+.ftw-chip-dot.t-warning { background: #f59e0b; }
+.ftw-chip-dot.t-danger { background: #ef4444; }

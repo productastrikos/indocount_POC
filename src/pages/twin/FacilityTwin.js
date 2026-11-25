@@ -9,6 +9,7 @@ import { compact, healthTone, hhmm, linkTo, num, pct, statusTone } from '../../u
 import { createFacilityScene } from './scene';
 import { ROLE_COLOR, STATE_COLOR } from './layout';
 import WorkerDrawer, { STATE_LABEL, stateColor } from './WorkerDrawer';
+import CctvWall from '../../components/cctv/CctvWall';
 
 const LAYERS = [
   ['workers', 'Workers', 'users'], ['flow', 'Pillow flow', 'route'], ['counts', 'Counts', 'grid'],
@@ -422,6 +423,7 @@ export default function FacilityTwin({ code }) {
             { value: 'floor', label: selLine ? selLine.code.split('-')[1] : 'Floor' },
             { value: 'workforce', label: 'Workforce · RFID' },
             { value: 'siap', label: 'S!AP advisories' },
+            { value: 'cctv', label: 'CCTV' },
           ]} />
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto twin-scroll p-3">
@@ -435,6 +437,12 @@ export default function FacilityTwin({ code }) {
             </>
           )}
           {data && tab === 'workforce' && <WorkforcePanel data={data} onWorker={setWorker} />}
+          {data && tab === 'cctv' && (
+            <div className="space-y-2">
+              <p className="text-[11px] text-fg-muted">Live cameras at {data.factory.name} with computer-vision overlays. Open one for worker identities (RFID), pillow counts and carton labels.</p>
+              <CctvWall factory={code} cols={1} onOpenWorker={setWorker} />
+            </div>
+          )}
           {data && tab === 'siap' && (
             <div className="space-y-2">
               <p className="text-[11px] text-fg-muted">Predictions and recommendations for {data.factory.name}: machine repairs, quality risk, spares and RFID workforce patterns.</p>

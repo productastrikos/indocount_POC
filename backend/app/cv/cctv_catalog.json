@@ -1,0 +1,982 @@
+{
+ "generated": "2026-11-25T15:25:15",
+ "feeds": [
+  {
+   "id": "knv-04",
+   "factory": "KNV",
+   "camera": "CAM-KNV-04",
+   "title": "Carton packing \u00b7 club display pallet",
+   "kind": "packing",
+   "station": null,
+   "area": null,
+   "ptz": false,
+   "duration": 28.87,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/knv-04.mp4",
+   "poster": "/cctv/knv-04.jpg",
+   "analytics": "/cctv/knv-04.json",
+   "models": {
+    "people": "YOLO11m + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "pillows": "MOG2 motion \u00d7 colour segmentation + blob tracking",
+    "ocr": "PP-OCRv4 (RapidOCR)"
+   },
+   "summary": {
+    "people_peak": 11,
+    "people_avg": 7.2,
+    "tracks": 40,
+    "pillows_placed": 16,
+    "placements": 8,
+    "pillows_per_min": 33.3,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": 94.2,
+    "idle_events": 1,
+    "ocr_reads": 52
+   },
+   "recognition": {
+    "customer_code": "CST",
+    "customer": "Costco",
+    "brand": "Beautyrest BLACK",
+    "product": "Cooling memory-foam + gel-fibre 2-pack bed pillows",
+    "rule": "Club full-pallet display print (Beautyrest BLACK, 2-pack) -> club-channel order",
+    "label": "Club display pallet carton",
+    "evidence": [
+     {
+      "text": "BLACK",
+      "reads": 22,
+      "conf": 0.89
+     },
+     {
+      "text": "Beautyrest",
+      "reads": 15,
+      "conf": 0.95
+     },
+     {
+      "text": "COOLING",
+      "reads": 15,
+      "conf": 1.0
+     }
+    ],
+    "confidence": 0.95
+   }
+  },
+  {
+   "id": "knv-05",
+   "factory": "KNV",
+   "camera": "CAM-KNV-05",
+   "title": "Carton packing \u00b7 retail cartons",
+   "kind": "packing",
+   "station": null,
+   "area": null,
+   "ptz": false,
+   "duration": 25.07,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/knv-05.mp4",
+   "poster": "/cctv/knv-05.jpg",
+   "analytics": "/cctv/knv-05.json",
+   "models": {
+    "people": "YOLO11m + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "pillows": "MOG2 motion \u00d7 colour segmentation + blob tracking",
+    "ocr": "PP-OCRv4 (RapidOCR)",
+    "placement": "Hand-pose lift & plunge + blob track"
+   },
+   "summary": {
+    "people_peak": 6,
+    "people_avg": 4.3,
+    "tracks": 17,
+    "pillows_placed": 9,
+    "placements": 9,
+    "pillows_per_min": 21.5,
+    "cartons_completed": 2,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": 100.0,
+    "idle_events": 0,
+    "ocr_reads": 76
+   },
+   "recognition": {
+    "customer_code": "WMT",
+    "customer": "Walmart",
+    "brand": "Serta",
+    "product": "Serta bed pillows",
+    "rule": "Retail carton label 'Dept. #22 / Bedding' with RFID mark -> Walmart department-coded label",
+    "label": "Department-coded RFID carton label",
+    "evidence": [
+     {
+      "text": "Dept. #22",
+      "reads": 47,
+      "conf": 0.78
+     },
+     {
+      "text": "Bedding",
+      "reads": 16,
+      "conf": 0.93
+     },
+     {
+      "text": "SERTA BED PILLOWS",
+      "reads": 8,
+      "conf": 0.81
+     },
+     {
+      "text": "RFID",
+      "reads": 5,
+      "conf": 0.89
+     }
+    ],
+    "confidence": 0.85
+   }
+  },
+  {
+   "id": "knv-02",
+   "factory": "KNV",
+   "camera": "CAM-KNV-02",
+   "title": "Sewing line \u00b7 outfeed conveyor",
+   "kind": "line",
+   "station": null,
+   "area": null,
+   "ptz": false,
+   "duration": 9.33,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/knv-02.mp4",
+   "poster": "/cctv/knv-02.jpg",
+   "analytics": "/cctv/knv-02.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "pillows": "MOG2 motion \u00d7 colour segmentation + blob tracking",
+    "flow": "Farneb\u00e4ck optical flow",
+    "count": "Optical-flow line sensor"
+   },
+   "summary": {
+    "people_peak": 3,
+    "people_avg": 1.9,
+    "tracks": 4,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 2,
+    "belt_speed_px_s": 24.4,
+    "station_active_pct": 100.0,
+    "idle_events": 0,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "knv-01",
+   "factory": "KNV",
+   "camera": "CAM-KNV-01",
+   "title": "Pillow filling \u00b7 machine hall",
+   "kind": "area",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 10.47,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/knv-01.mp4",
+   "poster": "/cctv/knv-01.jpg",
+   "analytics": "/cctv/knv-01.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)"
+   },
+   "summary": {
+    "people_peak": 4,
+    "people_avg": 2.1,
+    "tracks": 9,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "knv-03",
+   "factory": "KNV",
+   "camera": "CAM-KNV-03",
+   "title": "Compression & bagging",
+   "kind": "line",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 13.4,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/knv-03.mp4",
+   "poster": "/cctv/knv-03.jpg",
+   "analytics": "/cctv/knv-03.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)"
+   },
+   "summary": {
+    "people_peak": 1,
+    "people_avg": 0.3,
+    "tracks": 2,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "knv-06",
+   "factory": "KNV",
+   "camera": "CAM-KNV-06",
+   "title": "Final inspection \u00b7 dispatch lane",
+   "kind": "area",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 10.73,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/knv-06.mp4",
+   "poster": "/cctv/knv-06.jpg",
+   "analytics": "/cctv/knv-06.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)",
+    "ocr": "PP-OCRv4 (RapidOCR)"
+   },
+   "summary": {
+    "people_peak": 4,
+    "people_avg": 2.7,
+    "tracks": 4,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 1
+   },
+   "recognition": {
+    "brand": "Serta",
+    "product": "Serta bed pillows (cartoned)",
+    "rule": "Carton print read for staging verification",
+    "label": "Carton print",
+    "evidence": [
+     {
+      "text": "Serta",
+      "reads": 1,
+      "conf": 0.98
+     }
+    ],
+    "confidence": 0.98
+   }
+  },
+  {
+   "id": "knv-07",
+   "factory": "KNV",
+   "camera": "CAM-KNV-07",
+   "title": "Fibre opening \u00b7 feed bins",
+   "kind": "area",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 10.47,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/knv-07.mp4",
+   "poster": "/cctv/knv-07.jpg",
+   "analytics": "/cctv/knv-07.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)"
+   },
+   "summary": {
+    "people_peak": 0,
+    "people_avg": 0.0,
+    "tracks": 0,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "knv-08",
+   "factory": "KNV",
+   "camera": "CAM-KNV-08",
+   "title": "Carding & bun formation",
+   "kind": "area",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 15.4,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/knv-08.mp4",
+   "poster": "/cctv/knv-08.jpg",
+   "analytics": "/cctv/knv-08.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)"
+   },
+   "summary": {
+    "people_peak": 0,
+    "people_avg": 0.0,
+    "tracks": 0,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "phx-04",
+   "factory": "PHX",
+   "camera": "CAM-PHX-04",
+   "title": "Carton packing \u00b7 retail cartons",
+   "kind": "packing",
+   "station": null,
+   "area": null,
+   "ptz": false,
+   "duration": 25.07,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/phx-04.mp4",
+   "poster": "/cctv/phx-04.jpg",
+   "analytics": "/cctv/phx-04.json",
+   "models": {
+    "people": "YOLO11m + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "pillows": "MOG2 motion \u00d7 colour segmentation + blob tracking",
+    "ocr": "PP-OCRv4 (RapidOCR)",
+    "placement": "Hand-pose lift & plunge + blob track"
+   },
+   "summary": {
+    "people_peak": 5,
+    "people_avg": 3.5,
+    "tracks": 17,
+    "pillows_placed": 4,
+    "placements": 4,
+    "pillows_per_min": 9.6,
+    "cartons_completed": 1,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": 100.0,
+    "idle_events": 0,
+    "ocr_reads": 31
+   },
+   "recognition": {
+    "customer_code": "WMT",
+    "customer": "Walmart",
+    "brand": "Serta",
+    "product": "Serta bed pillows",
+    "rule": "Retail carton label 'Dept. #22 / Bedding' with RFID mark -> Walmart department-coded label",
+    "label": "Department-coded RFID carton label",
+    "evidence": [
+     {
+      "text": "Dept. #22",
+      "reads": 22,
+      "conf": 0.75
+     },
+     {
+      "text": "Bedding",
+      "reads": 9,
+      "conf": 0.76
+     }
+    ],
+    "confidence": 0.76
+   }
+  },
+  {
+   "id": "phx-05",
+   "factory": "PHX",
+   "camera": "CAM-PHX-05",
+   "title": "Carton packing \u00b7 club display pallet",
+   "kind": "packing",
+   "station": null,
+   "area": null,
+   "ptz": false,
+   "duration": 28.87,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/phx-05.mp4",
+   "poster": "/cctv/phx-05.jpg",
+   "analytics": "/cctv/phx-05.json",
+   "models": {
+    "people": "YOLO11m + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "pillows": "MOG2 motion \u00d7 colour segmentation + blob tracking",
+    "ocr": "PP-OCRv4 (RapidOCR)"
+   },
+   "summary": {
+    "people_peak": 9,
+    "people_avg": 5.3,
+    "tracks": 29,
+    "pillows_placed": 18,
+    "placements": 9,
+    "pillows_per_min": 37.4,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": 97.0,
+    "idle_events": 0,
+    "ocr_reads": 55
+   },
+   "recognition": {
+    "customer_code": "CST",
+    "customer": "Costco",
+    "brand": "Beautyrest BLACK",
+    "product": "Cooling memory-foam + gel-fibre 2-pack bed pillows",
+    "rule": "Club full-pallet display print (Beautyrest BLACK, 2-pack) -> club-channel order",
+    "label": "Club display pallet carton",
+    "evidence": [
+     {
+      "text": "BLACK",
+      "reads": 23,
+      "conf": 0.91
+     },
+     {
+      "text": "COOLING",
+      "reads": 18,
+      "conf": 0.95
+     },
+     {
+      "text": "Beautyrest",
+      "reads": 14,
+      "conf": 0.99
+     }
+    ],
+    "confidence": 0.95
+   }
+  },
+  {
+   "id": "phx-02",
+   "factory": "PHX",
+   "camera": "CAM-PHX-02",
+   "title": "Sewing line \u00b7 conveyor tour",
+   "kind": "line",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 15.4,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/phx-02.mp4",
+   "poster": "/cctv/phx-02.jpg",
+   "analytics": "/cctv/phx-02.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)"
+   },
+   "summary": {
+    "people_peak": 4,
+    "people_avg": 1.8,
+    "tracks": 12,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "phx-01",
+   "factory": "PHX",
+   "camera": "CAM-PHX-01",
+   "title": "Pillow filling \u00b7 shell loading",
+   "kind": "area",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 6.47,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/phx-01.mp4",
+   "poster": "/cctv/phx-01.jpg",
+   "analytics": "/cctv/phx-01.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)"
+   },
+   "summary": {
+    "people_peak": 4,
+    "people_avg": 3.2,
+    "tracks": 5,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "phx-03",
+   "factory": "PHX",
+   "camera": "CAM-PHX-03",
+   "title": "Compression \u00b7 roller outfeed",
+   "kind": "line",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 15.4,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/phx-03.mp4",
+   "poster": "/cctv/phx-03.jpg",
+   "analytics": "/cctv/phx-03.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)"
+   },
+   "summary": {
+    "people_peak": 1,
+    "people_avg": 0.1,
+    "tracks": 2,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "phx-06",
+   "factory": "PHX",
+   "camera": "CAM-PHX-06",
+   "title": "Final inspection \u00b7 carton staging",
+   "kind": "area",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 7.93,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/phx-06.mp4",
+   "poster": "/cctv/phx-06.jpg",
+   "analytics": "/cctv/phx-06.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)",
+    "ocr": "PP-OCRv4 (RapidOCR)"
+   },
+   "summary": {
+    "people_peak": 2,
+    "people_avg": 1.5,
+    "tracks": 6,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 1
+   },
+   "recognition": {
+    "brand": "Serta",
+    "product": "Serta bed pillows (cartoned)",
+    "rule": "Carton print read for staging verification",
+    "label": "Carton print",
+    "evidence": [
+     {
+      "text": "Serta",
+      "reads": 1,
+      "conf": 0.9
+     }
+    ],
+    "confidence": 0.9
+   }
+  },
+  {
+   "id": "cmh-04",
+   "factory": "CMH",
+   "camera": "CAM-CMH-04",
+   "title": "Carton packing \u00b7 retail cartons",
+   "kind": "packing",
+   "station": null,
+   "area": null,
+   "ptz": false,
+   "duration": 10.13,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/cmh-04.mp4",
+   "poster": "/cctv/cmh-04.jpg",
+   "analytics": "/cctv/cmh-04.json",
+   "models": {
+    "people": "YOLO11m + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "pillows": "MOG2 motion \u00d7 colour segmentation + blob tracking",
+    "ocr": "PP-OCRv4 (RapidOCR)",
+    "placement": "Hand-pose lift & plunge + blob track"
+   },
+   "summary": {
+    "people_peak": 6,
+    "people_avg": 4.5,
+    "tracks": 12,
+    "pillows_placed": 2,
+    "placements": 2,
+    "pillows_per_min": 11.8,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": 100.0,
+    "idle_events": 0,
+    "ocr_reads": 30
+   },
+   "recognition": {
+    "customer_code": "WMT",
+    "customer": "Walmart",
+    "brand": "Serta",
+    "product": "Serta bed pillows",
+    "rule": "Retail carton label 'Dept. #22 / Bedding' with RFID mark -> Walmart department-coded label",
+    "label": "Department-coded RFID carton label",
+    "evidence": [
+     {
+      "text": "Dept. #22",
+      "reads": 16,
+      "conf": 0.78
+     },
+     {
+      "text": "Bedding",
+      "reads": 9,
+      "conf": 0.8
+     },
+     {
+      "text": "RFID",
+      "reads": 4,
+      "conf": 0.65
+     },
+     {
+      "text": "SERTA BED PILLOWS",
+      "reads": 1,
+      "conf": 0.74
+     }
+    ],
+    "confidence": 0.74
+   }
+  },
+  {
+   "id": "cmh-05",
+   "factory": "CMH",
+   "camera": "CAM-CMH-05",
+   "title": "Carton packing \u00b7 retail cartons (west)",
+   "kind": "packing",
+   "station": null,
+   "area": null,
+   "ptz": false,
+   "duration": 25.07,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/cmh-05.mp4",
+   "poster": "/cctv/cmh-05.jpg",
+   "analytics": "/cctv/cmh-05.json",
+   "models": {
+    "people": "YOLO11m + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "pillows": "MOG2 motion \u00d7 colour segmentation + blob tracking",
+    "ocr": "PP-OCRv4 (RapidOCR)",
+    "placement": "Hand-pose lift & plunge + blob track"
+   },
+   "summary": {
+    "people_peak": 6,
+    "people_avg": 3.6,
+    "tracks": 19,
+    "pillows_placed": 4,
+    "placements": 4,
+    "pillows_per_min": 9.6,
+    "cartons_completed": 1,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": 100.0,
+    "idle_events": 0,
+    "ocr_reads": 60
+   },
+   "recognition": {
+    "customer_code": "WMT",
+    "customer": "Walmart",
+    "brand": "Serta",
+    "product": "Serta bed pillows",
+    "rule": "Retail carton label 'Dept. #22 / Bedding' with RFID mark -> Walmart department-coded label",
+    "label": "Department-coded RFID carton label",
+    "evidence": [
+     {
+      "text": "Dept. #22",
+      "reads": 24,
+      "conf": 0.84
+     },
+     {
+      "text": "Bedding",
+      "reads": 21,
+      "conf": 0.93
+     },
+     {
+      "text": "SERTA BED PILLOWS",
+      "reads": 10,
+      "conf": 0.82
+     },
+     {
+      "text": "RFID",
+      "reads": 5,
+      "conf": 0.88
+     }
+    ],
+    "confidence": 0.87
+   }
+  },
+  {
+   "id": "cmh-02",
+   "factory": "CMH",
+   "camera": "CAM-CMH-02",
+   "title": "Sewing line \u00b7 outfeed conveyor",
+   "kind": "line",
+   "station": null,
+   "area": null,
+   "ptz": false,
+   "duration": 9.33,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/cmh-02.mp4",
+   "poster": "/cctv/cmh-02.jpg",
+   "analytics": "/cctv/cmh-02.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "pillows": "MOG2 motion \u00d7 colour segmentation + blob tracking",
+    "flow": "Farneb\u00e4ck optical flow",
+    "count": "Optical-flow line sensor"
+   },
+   "summary": {
+    "people_peak": 3,
+    "people_avg": 1.7,
+    "tracks": 3,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 2,
+    "belt_speed_px_s": 25.4,
+    "station_active_pct": 78.5,
+    "idle_events": 1,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "cmh-01",
+   "factory": "CMH",
+   "camera": "CAM-CMH-01",
+   "title": "Pillow filling \u00b7 chute & display box",
+   "kind": "area",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 9.4,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/cmh-01.mp4",
+   "poster": "/cctv/cmh-01.jpg",
+   "analytics": "/cctv/cmh-01.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)",
+    "ocr": "PP-OCRv4 (RapidOCR)"
+   },
+   "summary": {
+    "people_peak": 1,
+    "people_avg": 0.1,
+    "tracks": 1,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "cmh-03",
+   "factory": "CMH",
+   "camera": "CAM-CMH-03",
+   "title": "Compression & bagging",
+   "kind": "line",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 13.4,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/cmh-03.mp4",
+   "poster": "/cctv/cmh-03.jpg",
+   "analytics": "/cctv/cmh-03.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)"
+   },
+   "summary": {
+    "people_peak": 1,
+    "people_avg": 0.2,
+    "tracks": 2,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 0
+   },
+   "recognition": null
+  },
+  {
+   "id": "cmh-06",
+   "factory": "CMH",
+   "camera": "CAM-CMH-06",
+   "title": "Final inspection \u00b7 dispatch lane",
+   "kind": "area",
+   "station": null,
+   "area": null,
+   "ptz": true,
+   "duration": 10.73,
+   "fps": 15,
+   "width": 960,
+   "height": 540,
+   "video": "/cctv/cmh-06.mp4",
+   "poster": "/cctv/cmh-06.jpg",
+   "analytics": "/cctv/cmh-06.json",
+   "models": {
+    "people": "YOLO11s-pose + ByteTrack",
+    "pose": "YOLO11s-pose (17 keypoints)",
+    "activity": "Keypoint & motion classifier",
+    "objects": "YOLOE-11s open-vocabulary (pillow, carton, pallet)",
+    "ocr": "PP-OCRv4 (RapidOCR)"
+   },
+   "summary": {
+    "people_peak": 4,
+    "people_avg": 2.6,
+    "tracks": 4,
+    "pillows_placed": 0,
+    "placements": 0,
+    "pillows_per_min": null,
+    "cartons_completed": 0,
+    "line_crossings": 0,
+    "belt_speed_px_s": null,
+    "station_active_pct": null,
+    "idle_events": 0,
+    "ocr_reads": 1
+   },
+   "recognition": {
+    "brand": "Serta",
+    "product": "Serta bed pillows (cartoned)",
+    "rule": "Carton print read for staging verification",
+    "label": "Carton print",
+    "evidence": [
+     {
+      "text": "Serta",
+      "reads": 1,
+      "conf": 0.98
+     }
+    ],
+    "confidence": 0.98
+   }
+  }
+ ]
+}

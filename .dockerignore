@@ -3,3 +3,5 @@ build
 backend
 .git
 *.md
+.cvenv
+build-*

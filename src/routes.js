@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   ROUTES: the seven lifecycle pages shown in the sidebar.
+   ROUTES: the lifecycle pages plus the intelligence modules shown in the sidebar.
    icon      a name from src/components/ui/Icon.js
    stage     the backend stage key used for alerts and insights
    filters   which global filters are relevant on the page
@@ -11,6 +11,7 @@ import Quality from './pages/Quality';
 import Warehouse from './pages/Warehouse';
 import Dispatch from './pages/Dispatch';
 import CommandCenter from './pages/CommandCenter';
+import Maintenance from './pages/Maintenance';
 
 export const NAV_SECTIONS = [
   {
@@ -27,6 +28,7 @@ export const NAV_SECTIONS = [
   {
     label: 'Intelligence',
     items: [
+      { path: '/maintenance', label: 'Predictive Maintenance', short: 'Maintenance', icon: 'wrench', stage: 'production', element: <Maintenance />, filters: [] },
       { path: '/ai', label: 'AI Command Center', short: 'AI', icon: 'sparkles', stage: 'ai', element: <CommandCenter />, filters: [] },
     ],
   },

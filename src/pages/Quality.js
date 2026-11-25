@@ -10,6 +10,9 @@ import { useApi } from '../hooks/useApi';
 import { useApp } from '../data/DataProvider';
 import { buildUrl, post, put } from '../api/client';
 import { dateShort, dateTime, dayTime, hhmm, num, pct, statusTone } from '../utils';
+import CctvPlayer from '../components/cctv/CctvPlayer';
+import CctvViewer from '../components/cctv/CctvViewer';
+import { DEFAULT_LAYERS, assignIdentities, useAnalytics, useSimClock } from '../components/cctv/cctvShared';
 
 const FLOW_TONE = { Normal: 'success', Attention: 'warning', Blocked: 'danger' };
 const RESULT_LABEL = { Correct: 'PASS', Underpacked: 'UNDERPACKED', Overpacked: 'OVERPACKED', Defect: 'DEFECT' };
@@ -442,7 +445,38 @@ function CameraFrame({ camId }) {
   );
 }
 
+/* Real plant footage with the CV overlay (falls back to the generated frame). */
+function FeedView({ feed, feeds }) {
+  useSimClock();
+  const { data } = useAnalytics(feed.analytics);
+  const detail = useApi(`/api/cctv/feeds/${feed.id}`, {}, { every: 3 });
+  const ids = React.useMemo(() => assignIdentities(data, detail.data?.workers), [data, detail.data?.workers]);
+  const [full, setFull] = useState(false);
+  const rec = data?.recognition;
+  const order = detail.data?.order;
+  return (
+    <div>
+      <div className="relative">
+        <CctvPlayer key={feed.id} feed={feed} analytics={data} identities={ids} layers={DEFAULT_LAYERS} onClick={() => setFull(true)} />
+        <button type="button" onClick={() => setFull(true)}
+          className="absolute top-9 right-2 text-[11px] font-semibold px-2 py-1 rounded-md"
+          style={{ background: 'rgba(5,10,20,0.75)', color: '#e2e8f0' }}>Open full screen</button>
+      </div>
+      {rec?.customer && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+          <Badge tone="info" dot>Customer: {rec.customer}</Badge>
+          {(rec.evidence || []).slice(0, 3).map((e) => <Badge key={e.text} tone="neutral">OCR “{e.text}” {Math.round(e.conf * 100)}%</Badge>)}
+          {order?.order && <span className="text-fg-muted">→ {order.order} · {order.sku} · {num(order.qty)} pillows</span>}
+        </div>
+      )}
+      {full && <CctvViewer feedId={feed.id} feeds={feeds} onClose={() => setFull(false)} />}
+    </div>
+  );
+}
+
 function CamerasTab({ factory }) {
+  const cctv = useApi('/api/cctv/feeds', { factory }, { live: false });
+  const feedByCode = Object.fromEntries((cctv.data?.feeds || []).map((f) => [f.camera, f]));
   const { data, loading, error, reload } = useApi('/api/quality/cameras', { factory }, { every: 3 });
   const [sel, setSel] = useState(null);
   const selected = sel ?? data?.find((c) => c.station === 'Carton packing')?.id ?? data?.[0]?.id;
@@ -452,7 +486,7 @@ function CamerasTab({ factory }) {
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-      <Card title="Cameras" subtitle={`${data?.length || 0} cameras · simulated feeds`} padded={false}>
+      <Card title="Cameras" subtitle={`${data?.length || 0} cameras · plant CCTV with CV overlays`} padded={false}>
         <ErrorBox error={error} onRetry={reload} />
         {loading && !data && <div className="p-4"><Loading /></div>}
         <div className="divide-y divide-line">
@@ -480,17 +514,18 @@ function CamerasTab({ factory }) {
       <div className="xl:col-span-2 space-y-4">
         <Card title={cam ? `${cam.code} · ${cam.name}` : 'Camera'} subtitle={cam ? `${cam.station} · ${cam.line}${cam.sku ? ` · ${cam.sku}` : ''}` : undefined}
           actions={cam && <StatusBadge status={cam.status} />}>
-          {selected ? <CameraFrame camId={selected} /> : <Empty icon="camera">No camera selected.</Empty>}
+          {selected && cam && feedByCode[cam.code] ? <FeedView feed={feedByCode[cam.code]} feeds={cctv.data.feeds} />
+            : selected ? <CameraFrame camId={selected} /> : <Empty icon="camera">No camera selected.</Empty>}
           {cam && (
             <div className="mt-3">
               <KV cols={4} items={[
                 ['Status', cam.status], ['Production line', cam.line], ['Current SKU', cam.sku || '—'],
-                ['Inference', `${cam.provider}${cam.opencv_available ? ' (OpenCV)' : ''}`],
+                ['Inference', feedByCode[cam.code] ? 'YOLO11 + ByteTrack · pose · OCR' : `${cam.provider}${cam.opencv_available ? ' (OpenCV)' : ''}`],
                 ['Inspections today', num(cam.inspections_today)], ['Detection events', num(cam.detections_today)],
                 ['Latest carton', detail.data.latest_carton?.code || '—'],
                 ['Latest count', detail.data.latest_carton ? `${detail.data.latest_carton.detected}/${detail.data.latest_carton.required}` : '—'],
               ]} />
-              <p className="text-[10.5px] text-fg-faint mt-3">{detail.data.note}</p>
+              <p className="text-[10.5px] text-fg-faint mt-3">{feedByCode[cam.code] ? 'Recorded plant-floor footage analysed frame by frame and replayed in sync with the video. Carton counts below come from the station counter.' : detail.data.note}</p>
             </div>
           )}
         </Card>
@@ -603,7 +638,7 @@ function AnalyticsTab({ factory, focusCustomer }) {
           )}
         </Card>
       </div>
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
         <Card title="Customer-wise packaging errors" subtitle="Share of cartons failing first-pass inspection, last 7 days">
           <MiniChart type="bar" horizontal height={Math.max(160, data.by_customer.length * 30)}
             data={{ labels: data.by_customer.map((c) => c.customer), datasets: [{ label: 'Error rate %', data: data.by_customer.map((c) => c.error_rate_pct),
@@ -690,8 +725,8 @@ export default function Quality() {
       {tab === 'cameras' && <CamerasTab factory={factory} />}
       {tab === 'specs' && <SpecsTab />}
       {tab === 'analytics' && (
-        <div className="grid grid-cols-1 2xl:grid-cols-4 gap-4">
-          <div className="2xl:col-span-3"><AnalyticsTab factory={factory} focusCustomer={focusCustomer} /></div>
+        <div className="grid grid-cols-1 2xl:grid-cols-4 gap-4 items-start">
+          <div className="2xl:col-span-3 min-w-0"><AnalyticsTab factory={factory} focusCustomer={focusCustomer} /></div>
           <InsightsCard page="quality" limit={5} />
         </div>
       )}

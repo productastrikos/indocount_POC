@@ -7,3 +7,9 @@ backend/*.db
 backend/*.db-*
 __pycache__/
 *.pyc
+.cvenv/
+build-*/
+
+# local-only inputs: raw CCTV source clips (rendered feeds live in public/cctv) and the reference canvas
+/WhatsApp Video *.mp4
+/dashboard/

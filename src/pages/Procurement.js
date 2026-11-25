@@ -627,7 +627,7 @@ export default function Procurement() {
         </KpiRow>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 items-start">
         <Card className="xl:col-span-3" padded={false}>
           <div className="px-4 pt-1"><Tabs tabs={TABS} value={tab} onChange={setTab} variant="underline" /></div>
 

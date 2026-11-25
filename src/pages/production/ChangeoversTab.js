@@ -26,7 +26,7 @@ export default function ChangeoversTab({ factory, onOpenLine }) {
         <Kpi label="Over standard" value={num(data.flagged)} tone={data.flagged ? 'warning' : 'success'} sub="Flagged events" onClick={() => setFlaggedOnly((f) => !f)} active={flaggedOnly} />
         <Kpi label="Time lost" value={`${num(data.total_lost_min, 1)} min`} tone={data.total_lost_min > 15 ? 'danger' : undefined} sub="Beyond the standard" />
       </div>
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
         <Card title="Lines losing the most time to changeovers" subtitle="Minutes beyond standard">
           {top.length ? (
             <MiniChart type="bar" horizontal height={Math.max(140, top.length * 26)} data={{

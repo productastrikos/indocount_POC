@@ -248,7 +248,7 @@ const RISK_TONE = { High: 'danger', Medium: 'warning', Low: 'success' };
 function FillWeightCard({ rows, onSelect }) {
   const counts = rows.reduce((a, r) => { a[r.risk] = (a[r.risk] || 0) + 1; return a; }, {});
   return (
-    <Card title="Fill-weight drift risk" padded={false} className="h-full"
+    <Card title="Fill-weight drift risk" padded={false}
       subtitle={`Filling Head pressure level & trend → under-fill risk (limit ${rows[0]?.limit_pct ?? -4}% pressure)`}
       actions={<span className="text-[10.5px] text-fg-faint">{counts.High || 0} high · {counts.Medium || 0} medium · {counts.Low || 0} low</span>}>
       {rows.length === 0 ? <Empty>No filling heads in scope.</Empty> : (
@@ -274,7 +274,7 @@ function FillWeightCard({ rows, onSelect }) {
 
 function EnergyCard({ energy, onSelect }) {
   return (
-    <Card title="Energy / power anomaly" padded={false} className="h-full"
+    <Card title="Energy / power anomaly" padded={false}
       subtitle={`Power above baseline +3% while running · tariff $${energy.tariff_usd_kwh}/kWh (illustrative)`}>
       <div className="grid grid-cols-3 gap-2 px-4 pt-3">
         <div className="tile"><p className="label-caps">Excess / day</p><p className="text-base font-bold text-fg tabular-nums">{num(energy.excess_kwh_day, 1)} <span className="text-[10px] font-normal text-fg-faint">kWh</span></p></div>
@@ -299,7 +299,7 @@ function EnergyCard({ energy, onSelect }) {
 
 function SparesCard({ rows }) {
   return (
-    <Card title="Spare-parts demand · next 30 days" padded={false} className="h-full"
+    <Card title="Spare-parts demand · next 30 days" padded={false}
       subtitle="Planned jobs + Σ Weibull failure probabilities; stock to hold for 90% service (Poisson)">
       <DataTable rowKey="part" rows={rows.slice(0, 8)} emptyText="No parts demand expected." columns={[
         { key: 'part', header: 'Part', strong: true, render: (r) => <span>{r.part}<span className="block text-[10px] text-fg-faint font-normal truncate max-w-[180px]">{r.machines.map((x) => x.code).join(', ') || '—'}</span></span> },
@@ -317,7 +317,7 @@ function TechniciansCard({ techs }) {
   const night = techs.after_hours_tonight;
   const week = techs.week;
   return (
-    <Card title="Maintenance technician workload" className="h-full" subtitle={techs.assumption}>
+    <Card title="Maintenance technician workload" subtitle={techs.assumption}>
       <div className="space-y-2">
         {techs.shifts.filter((s) => !s.past).map((s) => (
           <div key={`${s.factory}-${s.shift}`}>
@@ -656,7 +656,7 @@ export default function PredictiveTab({ factory, onOpenMachine }) {
 
       <div>
         <p className="label-caps mb-2 flex items-center gap-1.5"><Icon name="sparkles" size={12} className="text-accent" />Related predictions</p>
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 items-start">
           <FillWeightCard rows={r.fill_weight} onSelect={setSel} />
           <EnergyCard energy={r.energy} onSelect={setSel} />
           <SparesCard rows={r.spares} />
