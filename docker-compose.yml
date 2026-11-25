@@ -1,0 +1,44 @@
+# Indocount Smart Factory Intelligence — full stack.
+#   docker compose up --build
+#   UI:  http://localhost:3000     API docs: http://localhost:8000/docs
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: indocount
+      POSTGRES_USER: indocount
+      POSTGRES_PASSWORD: indocount
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U indocount -d indocount"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://indocount:indocount@db:5432/indocount
+      JWT_SECRET: ${JWT_SECRET:-indocount-demo-secret-change-me-in-production}
+      CORS_ORIGINS: http://localhost:3000
+      SIM_AUTOSTART: "true"
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_MODEL: ${LLM_MODEL:-claude-opus-5-5}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CV_PROVIDER: ${CV_PROVIDER:-opencv}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: .
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  pgdata:

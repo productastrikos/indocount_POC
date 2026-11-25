@@ -1,0 +1,151 @@
+/* Digital twin: an always-dark "control room" scope. The app's tokens are
+   re-declared here so every UI-kit component inside the twin renders dark. */
+.twin-root {
+  color-scheme: dark;
+  --color-bg: #050a14;
+  --color-surface: #0c1526;
+  --color-surface-raised: #13203a;
+  --color-input: #0a1222;
+  --color-border: rgba(148, 186, 255, 0.11);
+  --color-border-strong: rgba(148, 186, 255, 0.22);
+  --color-text: #e6eefb;
+  --color-text-muted: #a9bcd6;
+  --color-text-faint: #7488a8;
+  --color-primary: #38bdf8;
+  --color-primary-hover: #0ea5e9;
+  --color-primary-soft: rgba(56, 189, 248, 0.14);
+  --color-primary-border: rgba(56, 189, 248, 0.4);
+  --color-on-primary: #04121f;
+  --btn-secondary-bg: #13203a;
+  --btn-secondary-bg-hover: #1b2c4c;
+  --btn-primary-shadow: 0 2px 12px rgba(56, 189, 248, 0.25);
+  --card-bg: rgba(12, 21, 38, 0.92);
+  --tile-bg: rgba(19, 32, 58, 0.85);
+  --chart-grid: rgba(148, 186, 255, 0.07);
+  --chart-tick: #7488a8;
+  --chart-tooltip-bg: #0c1526;
+  --chart-tooltip-border: #1d2f52;
+  --twin-glass: rgba(8, 15, 28, 0.82);
+  --twin-line: rgba(96, 165, 250, 0.18);
+  --twin-cyan: #38bdf8;
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(1200px 600px at 30% 0%, #0c1a33 0%, #050a14 60%), #050a14;
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+.twin-topbar {
+  height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--twin-line);
+  background: linear-gradient(180deg, rgba(10, 20, 38, 0.95), rgba(6, 12, 24, 0.9));
+}
+.twin-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.twin-brand-icon {
+  width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.25), rgba(139, 92, 246, 0.25));
+  border: 1px solid rgba(56, 189, 248, 0.35); color: var(--twin-cyan);
+}
+.twin-crumbs { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--color-text-faint); min-width: 0; }
+.twin-crumbs button { color: var(--color-text-muted); font-weight: 600; }
+.twin-crumbs button:hover { color: var(--twin-cyan); }
+.twin-crumbs .is-current { color: var(--color-text); font-weight: 700; }
+.twin-live { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--color-text-muted); }
+.twin-live i { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); animation: twin-ping 1.8s infinite; }
+@keyframes twin-ping { 0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.6); } 80%, 100% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); } }
+
+.twin-glass {
+  background: var(--twin-glass);
+  border: 1px solid var(--twin-line);
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.twin-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.twin-scroll::-webkit-scrollbar-thumb { background: rgba(148, 186, 255, 0.18); border-radius: 8px; }
+
+/* ── US network map ─────────────────────────────────────────────────── */
+.us-map-state { fill: #0d1a2e; stroke: rgba(96, 165, 250, 0.22); stroke-width: 0.6; transition: fill 0.2s; }
+.us-map-state.is-home { fill: #10284a; }
+.us-map-nation { fill: none; stroke: rgba(56, 189, 248, 0.55); stroke-width: 1.2; filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.45)); }
+.us-lane { fill: none; stroke-width: 1.6; stroke-dasharray: 5 6; animation: us-dash 1.6s linear infinite; opacity: 0.75; }
+.us-lane.is-dim { opacity: 0.15; }
+@keyframes us-dash { to { stroke-dashoffset: -22; } }
+.us-pulse { transform-box: fill-box; transform-origin: center; animation: us-pulse 2.2s ease-out infinite; }
+@keyframes us-pulse { 0% { transform: scale(0.6); opacity: 0.9; } 100% { transform: scale(2.6); opacity: 0; } }
+.us-card {
+  position: absolute; width: 236px; pointer-events: auto; cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  --tx: 16px; --ty: -50%;
+  transform: translate(var(--tx), var(--ty));
+}
+.us-card.pos-left { --tx: calc(-100% - 16px); }
+.us-card.pos-above { --tx: -50%; --ty: calc(-100% - 18px); }
+.us-card.pos-below { --tx: -50%; --ty: 18px; }
+.us-card:hover, .us-card.is-hover {
+  transform: translate(var(--tx), var(--ty)) scale(1.03); z-index: 5;
+  border-color: rgba(56, 189, 248, 0.55); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* ── facility labels (CSS2D) ────────────────────────────────────────── */
+.tw-zone { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(147, 197, 253, 0.75); white-space: nowrap; text-shadow: 0 1px 2px #000; }
+.tw-room { font-size: 10px; font-weight: 600; color: #cbd5e1; white-space: nowrap; padding: 1px 6px; border-radius: 6px; background: rgba(5, 10, 20, 0.55); }
+.tw-room-muted { color: #94a3b8; border: 1px dashed rgba(148, 163, 184, 0.5); }
+.tw-room-danger { color: #fecaca; background: rgba(127, 29, 29, 0.55); }
+.tw-line {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; color: #e2e8f0; white-space: nowrap; padding: 3px 8px; border-radius: 8px;
+  background: rgba(8, 15, 28, 0.88); border: 1px solid rgba(96, 165, 250, 0.25);
+}
+.tw-line:hover, .tw-line.is-selected { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25); }
+.tw-line-sub { color: #94a3b8; font-variant-numeric: tabular-nums; }
+.tw-line-status { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.tw-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.tw-success { color: #4ade80; } .tw-dot.tw-success { background: #22c55e; }
+.tw-warning { color: #fbbf24; } .tw-dot.tw-warning { background: #f59e0b; }
+.tw-danger { color: #f87171; } .tw-dot.tw-danger { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+.tw-muted { color: #94a3b8; } .tw-dot.tw-muted { background: #64748b; }
+.tw-chip {
+  display: flex; flex-direction: column; align-items: center; line-height: 1.1; white-space: nowrap;
+  font-size: 11px; font-weight: 700; color: #f8fafc; font-variant-numeric: tabular-nums;
+  padding: 2px 6px; border-radius: 6px; background: rgba(8, 15, 28, 0.86); border: 1px solid rgba(96, 165, 250, 0.28);
+}
+.tw-chip i { font-style: normal; font-weight: 600; font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; color: #7dd3fc; }
+.tw-chip em { font-style: normal; font-weight: 600; font-size: 9px; color: #fbbf24; }
+.tw-chip-lg { font-size: 12px; padding: 3px 8px; }
+.tw-dock {
+  display: flex; flex-direction: column; font-size: 10px; color: #cbd5e1; white-space: nowrap; line-height: 1.2;
+  padding: 2px 6px; border-radius: 6px; background: rgba(8, 15, 28, 0.8); border: 1px solid rgba(148, 163, 184, 0.25);
+}
+.tw-dock b { color: #f8fafc; }
+.tw-dock span { color: #94a3b8; font-size: 9px; }
+.tw-dock.is-active { border-color: rgba(56, 189, 248, 0.6); }
+
+/* ── facility chrome ────────────────────────────────────────────────── */
+.twin-tool { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 8px;
+  font-size: 11.5px; font-weight: 600; color: var(--color-text-muted); border: 1px solid transparent; }
+.twin-tool:hover { color: var(--color-text); background: rgba(56, 189, 248, 0.08); }
+.twin-tool.is-active { color: #04121f; background: var(--twin-cyan); }
+.twin-tool.is-on { color: var(--twin-cyan); border-color: rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.08); }
+.twin-tooltip { position: absolute; z-index: 20; pointer-events: none; min-width: 190px; max-width: 280px; padding: 9px 11px; font-size: 11.5px; transform: translate(14px, 14px); }
+.twin-flow { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding-bottom: 2px; }
+.twin-stage {
+  flex: 1 1 0; min-width: 102px; text-align: left; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--twin-line);
+  background: rgba(12, 21, 38, 0.85); transition: border-color 0.15s, background 0.15s;
+}
+.twin-stage:hover { border-color: rgba(56, 189, 248, 0.45); }
+.twin-stage.is-active { border-color: var(--twin-cyan); background: rgba(56, 189, 248, 0.1); box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35); }
+.twin-arrow { align-self: center; color: rgba(125, 211, 252, 0.6); padding: 0 1px; flex-shrink: 0; }
+.twin-gantt { position: relative; height: 26px; border-radius: 6px; background: rgba(19, 32, 58, 0.7); overflow: hidden; }
+.twin-gantt > span { position: absolute; top: 0; bottom: 0; }
+.twin-legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.twin-worker-row { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 8px; align-items: center; width: 100%; text-align: left; padding: 7px 10px; border-radius: 8px; }
+.twin-worker-row:hover { background: rgba(56, 189, 248, 0.07); }

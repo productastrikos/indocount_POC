@@ -1,337 +1,138 @@
-# Enterprise Admin Dashboard — UI Template
+# Indocount Smart Factory Intelligence Platform (POC)
 
-A production-ready, fully self-contained React admin dashboard template. No backend, no API, no authentication required — all data is static and bundled with the frontend.
+One integrated application that follows a pillow from raw-material purchase order to delivered truckload across Indocount's three US plants (Kernersville NC, Phoenix AZ, Columbus OH). All seven pages read and write one relational model. A simulation engine moves material through every stage, so an event in one stage changes the others.
 
----
+> **All data is simulated.** Predictions (machine health, shipment risk) are illustrative models on simulated data, and detention charges are illustrative estimates ($350 per qualifying truck, configurable).
 
-## Tech Stack
+## Quick start
 
-| Layer | Technology |
-|---|---|
-| Framework | React 18 (Create React App) |
-| Routing | React Router v6 |
-| Charts | Chart.js 4 + react-chartjs-2 |
-| Map | React-Leaflet + Leaflet |
-| Styling | Tailwind CSS 3 + CSS custom properties |
-| Data | Static seed data (no server) |
-
----
-
-## Pages
-
-| Route | Page | Description |
-|---|---|---|
-| `/` | Dashboard | KPI cards, charts, segment overview, Digital Twin preview |
-| `/operations` | Operations | Records, assets, and inventory (3 tabs) |
-| `/analytics` | Analytics | Performance reports, workflow pipeline, system monitor (3 tabs) |
-| `/services` | Services | Request management table and charts |
-| `/map` | Digital Twin | Full-page interactive map with layer toggles |
-
----
-
-## Project Structure
-
-```
-client/
-  src/
-    App.js               # Routes + static user
-    index.css            # Design tokens, theme, component CSS
-    components/
-      Layout.js          # Sidebar, header, alert + advisory panels
-      KPICard.js         # KPI card component
-      KPIDetailModal.js  # KPI drill-down modal
-      AdvisoryPanel.js   # AI advisory slide-out panel
-      AlertPanel.js      # Real-time alerts slide-out panel
-      ZoneFilterBar.js   # Segment filter pill bar
-      chartUtils.js      # Chart tokens, timeframe control, helpers
-    pages/
-      Dashboard.js       # Main overview page
-      Operations.js      # 3-tab operations page
-      Analytics.js       # 3-tab analytics page
-      CitizenServices.js # Services/requests page
-      DigitalTwin.js     # Full-page map view
-    services/
-      socket.js          # Static data context provider
-      api.js             # Static API stubs
-```
-
----
-
-## Quick Start
-
+### Docker (PostgreSQL)
 ```bash
-# Install dependencies
-cd client && npm install
-
-# Start development server (http://localhost:3000)
-npm start
+docker compose up --build
+# UI  http://localhost:3000      API docs  http://localhost:8000/docs
 ```
+On its first start the backend runs the Alembic migrations, seeds the demo data and starts the simulation. Seeding takes about 30 seconds.
 
-Or from the project root:
-
+### Local development (SQLite)
 ```bash
-npm run dev      # starts client dev server
-npm run build    # produces client/build/
-```
+# backend
+cd backend
+python -m venv .venv && .venv/Scripts/activate        # macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --port 8000
 
----
-
-## Customisation
-
-**Retheming** — all colours are CSS custom properties in `client/src/index.css`. Change `--app-panel`, `--app-accent`, and `--app-advisory` to instantly retheme every component.
-
-**KPI values** — edit the `SEED_KPIS` and `SEED_BINS_SUMMARY` objects in `client/src/services/socket.js`.
-
-**Navigation labels** — update `NAV_SECTIONS` and `PAGE_TITLES` in `client/src/components/Layout.js`.
-
-**Static advisories / alerts** — edit `STATIC_ADVISORIES` in `AdvisoryPanel.js` and `SEED_ALERTS` in `socket.js`.
-
-┌─────────────────────────────────────────────────────────┐
-│                    React Frontend                        │
-│  Dashboard │ Collection │ Fleet │ WTE │ Digital Twin     │
-│  Processing │ Landfills │ Sustainability │ Enterprise    │
-├─────────────────────────────────────────────────────────┤
-│               Socket.io (Real-time)                      │
-├─────────────────────────────────────────────────────────┤
-│                 Express.js Backend                        │
-│  REST API │ Simulation Engine │ AI Advisory Engine        │
-├─────────────────────────────────────────────────────────┤
-│           In-Memory Data Store (No DB required)          │
-└─────────────────────────────────────────────────────────┘
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-- **Node.js** 18+ (https://nodejs.org)
-- **npm** 9+
-
-### Installation
-
-```bash
-# 1. Navigate to project root
-cd wastemanagement_SL
-
-# 2. Install root dependencies (concurrently)
+# frontend (repo root, second terminal)
 npm install
-
-# 3. Install all dependencies (server + client)
-npm run install:all
+npm start                                               # http://localhost:3000 (proxies /api to :8000)
 ```
 
-### Running the Platform
+### Single-port mode
+After `npm run build`, the backend also serves the built UI, so `uvicorn app.main:app --port 8000` gives the whole app at http://localhost:8000.
+
+### Demo accounts
+| User | Password | Role |
+|---|---|---|
+| `admin` | `admin123` | Administrator: everything, including simulation controls |
+| `exec` | `exec123` | Executive (read-only) |
+| `plant` | `plant123` | Plant Manager |
+| `maint` | `maint123` | Maintenance Manager |
+| `quality` | `quality123` | Quality Supervisor (carton overrides) |
+| `warehouse` | `wh123` | Warehouse Operator |
+| `procure` | `proc123` | Procurement Officer |
+| `logistics` | `log123` | Logistics Coordinator |
+
+The login screen lists them; click one to sign in.
+
+## What each page does
+
+| Page | Operational workspace |
+|---|---|
+| **Executive Overview** | 10 calculated KPIs with drill-downs (output vs target, efficiency vs previous shift, OEE = A×P×Q, downtime by cause, workforce utilization, labour cost per pillow incl. shift-2 differential, packaging accuracy, inventory availability, shipment readiness, potential detention). Also: the **Digital Twin** entry (live US network map), **S!AP advisories**, hourly actual vs target, factory comparison, lifecycle stage health, and a ranked *Requires Attention* list that links to the affected record. |
+| **Procurement & Inbound** | Purchase orders (create/update), inbound shipments (Scheduled → In Transit → Arrived → Receiving → Received/Discrepancy), and goods receipt with scan simulation. A goods receipt records shortages and damage separately and updates stock only when confirmed. Also: material days-of-cover, supplier performance, and AI reorder and expedite recommendations. |
+| **Production & Manufacturing** | Process pipeline (Raw Material Prep → Mixing → Flapper → Bun Formation → Filling → Sewing → Transfer) with live bottleneck detection. Also: 8 lines per plant, production orders, hourly monitoring, machine health (0–100 score, anomaly detection, maintenance prediction, work orders), **predictive maintenance** analytics, workforce productivity and labour cost, changeovers (3-min standard), and the **Optimize Production Plan** scheduler with before/after comparison and accept/reject. |
+| **Quality & Packaging** | Packaging workflow; packing stations that read the SKU spec, count pillows and block wrong counts until rework or a supervisor override with a reason. Also: simulated cameras (OpenCV counting on generated frames, labelled SIMULATED), defect history and quality analytics. |
+| **Warehouse & Inventory** | Zone/bay/rack/level layout with occupancy, finished-goods receiving by carton/pallet scan, and put-away (failed cartons are refused). Also: allocation with shortages linked to production orders, picking, and workload/workforce planning. |
+| **Dispatch & Delivery** | Order readiness (production → quality → inventory → allocation → picking), truck and dock scheduling with conflict prevention, shipment risk prediction with actions (prioritize, reallocate, expedite picking, reschedule truck), detention monitoring, and loading, departure and delivery confirmation. |
+| **AI Command Center** | Natural-language questions answered by data tools over the same database, with charts, tables, recommended actions and links to records. Uses Claude when configured; otherwise a local engine answers from the same tools. |
+
+## Digital twin
+Open it from the **Digital twin** card on the Executive Overview (deep link: `/?twin=us`, or `/?twin=KNV|PHX|CMH` for a plant).
+
+* **US network map.** The three plants on a real US map (us-atlas, Albers projection) with live status, output vs target, lines running, RFID badges at station/away, top alert, and the trucks currently on the road to customer DCs (destinations illustrative). Click a plant to open its twin.
+* **Facility twin (Three.js).** A top view of the plant, with a 3D orbit view as an option. Each of the 8 lines has its stations in process order: fibre opener → flapper → Garnett carding or blow unit → filling head → sewing tables (2 sewers) → bagging & compression press → conveyor to carton packing. Downstream are the packing cells with CV cameras, the QA hold cage, palletizing, finished-goods racks (real slot occupancy by zone/bay/rack/level), staging lanes and docks with live trucks. The receiving and raw-material stacks, break room, canteen, restrooms, lockers, supervisor desk, maintenance crib and material store complete the floor plan.
+* **Pillows at every step.** Each line shows pillows filled, sewn and bagged today and the work-in-process waiting between stations. The pillow-flow strip covers the whole plant: receiving → fibre prep → filling → sewing → bagging → carton packing → QA hold → palletizing → FG racks → dispatch. Each step shows the operators working it (at station / away), its availability, and pillows per worker-hour.
+* **RFID workforce tracking.** Every employee has a passive UHF badge (simulated). Zone readers at stations and doors write badge intervals (`rfid_intervals`): *Station*, *Away* (unscheduled) or *Break* (scheduled breaks and lunch, never counted as time away). The twin shows each person on the floor coloured by state, with a pulsing ring when someone has been away for more than 10 minutes. The *Workforce · RFID* panel shows time at station, time away by zone (restroom, material store, out of coverage, break overruns, …), the hourly trend, role comparison, and a searchable worker list. Each worker's drawer has their shift timeline, effectiveness (availability × output vs standard), longest trips, and a comparison with peers and previous days. Maintenance technicians are dispatched to broken machines, and their badges follow them.
+* **Causality.** Time away is not decoration. A sewer away from the table reduces that line's sewing capacity in the engine. Operators away grow the WIP buffers in front of their station. Per-person output is credited only for time at the station.
+
+## S!AP advisories and predictive maintenance
+The **S!AP advisories** panel (sparkles button in the header, the Executive Overview card and the twin's S!AP tab) ranks predictive, prescriptive advisories. Each comes with evidence, a confidence figure and an action.
+
+* **Machine-repair prediction** (`services/predictive.py`). A Weibull reliability model per machine type, with a proportional-hazards adjustment for current condition (health score, vibration/temperature vs baseline, wear). It is blended with the vibration-trend time to the alarm threshold, taking whichever is more conservative. It gives failure probability within 24 h, 72 h and 7 days, remaining useful life with a P10–P90 band, and the likely failure mode (bearing wear, belt slip, pneumatic seal leak, impeller imbalance, …). It also estimates the impact on pillows and orders, and recommends a maintenance window: the 23:00–06:00 non-production window loses no pillows. The comparison with running to failure is quantified, and **Schedule** creates the predictive work order.
+* **Related predictions:** fill-weight / under-fill risk from filling-head pressure, energy anomalies, spare-parts demand, maintenance-technician capacity, and RFID workforce patterns (people away now, chronic time away, material-store trips, break overruns).
+* **Production → Predictive maintenance tab:** risk matrix, 14-day failure and downtime forecast, remaining-life ranking, MTBF/MTTR, maintenance plan and per-machine probability curves.
+
+All models run on simulated telemetry and are labelled illustrative.
+
+## Cross-stage behaviour
+* **Material shortage.** A delayed shipment lowers days of cover and raises a procurement alert. Production orders get a projected stock-out window and later completion estimates, at-risk shipments appear in Dispatch, and management gets one consolidated alert. Lines stop when stock runs out and restart after a goods receipt.
+* **Machine breakdown.** Health drops to Critical, the line stops and a corrective work order opens. Completion estimates for the line's orders move out, and shipment readiness and risk are recalculated. If nobody intervenes, a degrading machine (e.g. M-102) can fail on its own.
+* **Packaging mismatch.** The carton is blocked and gets a HOLD id, no carton id. A defect record is created and the carton cannot be put away. Readiness waits for rework, override or rejection; rejected pillows go back to production.
+* **Warehouse delay.** Picking falls behind, the waiting truck accrues waiting time and the estimated detention charge, and the system recommends expediting picking or rescheduling.
+
+## Simulation
+Administrators use the **Sim** control in the header to start, pause, step, reset, change speed (1/5/15/30 simulated minutes per 3-second tick), and trigger scenarios: machine failure, production delay, material shortage, packaging mismatch, workforce productivity decline and truck delay. Scenarios target the factory selected in the header.
+
+The demo day starts at 11:00. Production between 06:00 and 11:00 has already been run by the engine, so today's history is consistent. Shift rules: 8.5 h scheduled presence, 30-min unpaid lunch, two paid 10-min breaks, and +$1/h on shift 2. Non-production hours (23:00–06:00) are skipped.
+
+## Architecture
+```
+React (CRA, Tailwind, UI kit, Chart.js, Three.js twin) ──REST /api──▶ FastAPI ──SQLAlchemy──▶ PostgreSQL / SQLite
+        ▲                                         │   Alembic migrations, JWT + roles
+        └────────────── WebSocket /ws ◀───────────┤   simulation engine (background thread)
+                                                  ├─ services: planning/optimizer, readiness, inventory, quality,
+                                                  │            workforce, machine health, metrics, alerts, insights,
+                                                  │            predictive (S!AP), twin (+ simulation/rfid.py)
+                                                  ├─ ai/: data tools + Claude tool use (anthropic SDK) / local engine
+                                                  ├─ cv/: inference interface, OpenCV counter, simulated fallback
+                                                  └─ integrations/: SAP B1, HRMS, IoT/PLC, CCTV, barcode/RFID adapters
+```
+* `backend/app/models.py`: one relational model (38 tables) shared by every stage. Migration `0002` adds `rfid_intervals` and `line_wip`.
+* `backend/app/simulation/rfid.py`: badge simulation (zones, trips, breaks, overruns, late arrivals, technician dispatch). `services/twin.py` is the twin read model; `services/predictive.py` holds the reliability models and S!AP advisories.
+* `backend/app/simulation/engine.py`: each tick moves inbound shipments, stock, lines, packing, pallets, put-away, allocation, picking, trucks and delivery, then recomputes projections and alerts.
+* `backend/app/services/planning.py`: schedule projection on the shift calendar, plus the optimizer (earliest-due-date construction with changeover-aware line choice, then relocation local search on weighted tardiness, changeovers and completion time).
+* Frontend: the existing dashboard template's design system (`src/theme`, `src/components/ui`) with the seven pages in `src/pages`.
+
+### Stack note
+The brief lists TypeScript, shadcn/ui and Recharts. To build on the UI template already in this repository, the frontend keeps that template's stack: React 18 (JavaScript), Tailwind tokens, the template's component kit and Chart.js theming. The backend follows the brief: FastAPI, SQLAlchemy, PostgreSQL, Alembic, WebSockets, pandas/NumPy, OpenCV and the Anthropic SDK.
+
+## AI configuration
+```
+LLM_PROVIDER=anthropic   ANTHROPIC_API_KEY=...   LLM_MODEL=claude-opus-5-5
+```
+With `anthropic`, Claude chooses among 18 data tools (`backend/app/ai/tools.py`) and answers only from their results. Server-side refusal fallback is enabled. If the API is unavailable, the local engine answers instead and says so. The default is `mock`, the local engine, which needs no network.
+
+## Tests
+`backend/tests/` holds 22 tests:
+
+* `test_acceptance.py` runs the eight acceptance scenarios end to end through the REST API, plus a smoke test of every page endpoint and a live-speed (1-minute tick) packing check.
+* `test_llm_provider.py` exercises the Claude tool loop and its fallback with a scripted client, so it makes no network calls.
+* `test_predictive.py` covers the S!AP contract, the M-102 bearing prediction and scheduling.
+* `test_twin.py` covers the network map, pillow-flow invariants (filled ≥ sewn ≥ bagged = line output), breaks never counted as time away, and technician dispatch to a breakdown.
+
+The suite passes on SQLite and on PostgreSQL (`PG_TEST_URL`). Set `TEST_DB_PATH` to run two suites side by side. The acceptance scenarios:
+
+1. Goods receipt with a shortage (10,000 → 9,800 kg) updates stock and production material availability.
+2. Production output flows into packing and inspection.
+3. An under-packed carton is blocked, alerted and refused by the warehouse; an override needs a supervisor and a reason.
+4. An approved carton is palletised, scanned and put away to a location.
+5. Allocation and picking raise readiness; loading, departure and delivery complete the order.
+6. A machine breakdown moves completion estimates and shipment readiness for ORD-501.
+7. A truck delay produces waiting time and a $350 estimated detention.
+8. AI answers match the records shown in the application.
 
 ```bash
-# Start both server and client concurrently
-npm run dev
+cd backend && .venv/Scripts/python -m pytest tests -q
 ```
 
-Or run them separately:
-
-```bash
-# Terminal 1 - Backend (port 5000)
-cd server && npm run dev
-
-# Terminal 2 - Frontend (port 3000)
-cd client && npm start
-```
-
-### Access
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:5000/api
-
-### Netlify Deployment
-
-The project is prepared for a Netlify full-stack deployment using Netlify static hosting for the React frontend and a Netlify Function wrapper for the Express API.
-
-1. Deploy the repository root to Netlify.
-2. Use `npm run build:netlify` as the build command.
-3. Use `client/build` as the publish directory.
-4. Backend requests to `/api/*` are routed to the Netlify function automatically.
-5. Add these environment variables in Netlify:
-
-```bash
-JWT_SECRET=replace-this-with-a-secure-random-secret
-REACT_APP_REALTIME_MODE=polling
-```
-
-Notes:
-- `netlify.toml` is already included at the repository root.
-- SPA route refreshes are handled by the included redirect rules.
-- Socket.io does not run persistently on Netlify Functions, so the client uses polling mode in production.
-- The simulation remains in-memory. In a serverless environment that means state can reset on cold starts, which is acceptable for demo deployment but not durable persistence.
-
-### Demo Credentials
-
-| Role         | Username    | Password     |
-|--------------|-------------|------------- |
-| Admin        | admin       | admin123     |
-| Operator     | operator    | operator123  |
-| Analyst      | analyst     | analyst123   |
-| Field Worker | fieldworker | field123     |
-
----
-
-## 📋 Platform Modules
-
-### 1. Command Dashboard
-- 6 real-time KPI cards (Collection, Recycling, Fleet, WTE, Landfill, Carbon)
-- Trend charts, waste composition, zone comparisons
-- Zone performance table, activity feed
-- Real-time weather integration
-
-### 2. Waste Collection
-- 400+ smart bin monitoring with fill levels, temperature, type
-- Zone-based filtering and sorting
-- Scheduled collection actions
-- Zone-level fill comparison charts
-
-### 3. Fleet Management
-- 45 vehicle real-time tracking (compactors, mini trucks, hook lifts)
-- Status monitoring: active, en route, collecting, idle, maintenance
-- Fuel levels, load capacity, speed
-- Dispatch controls
-
-### 4. WTE Plant (Kerawalapitiya)
-- Power output, daily intake, efficiency gauges
-- Furnace unit monitoring (3 units)
-- Emission tracking (CO₂, SO₂, NOₓ, PM, Dioxins)
-- 24-hour power output trends
-
-### 5. Processing & Recycling
-- Transfer stations, recycling centers, composting facilities
-- Material recovery distribution
-- Throughput and utilization tracking
-
-### 6. Landfill Management
-- Aruwakkalu and Karadiyana monitoring
-- Capacity utilization, intake tracking
-- Environmental monitoring (methane, groundwater, odor)
-- Remaining lifespan projections
-
-### 7. Sustainability & ESG
-- Carbon score, waste diversion rate, CO₂ reduction tracking
-- Circular economy breakdown
-- Environmental Performance Index
-- UN SDG alignment scores (Goals 6, 7, 11, 12, 13)
-
-### 8. Enterprise Modules
-- **HR**: Staff count, attendance, field workers, hiring
-- **Finance**: Budget tracking, revenue, spend analysis
-- **Procurement**: PO management, vendor tracking, savings
-- **IT & Security**: System infrastructure
-- **Legal & Compliance**: Regulatory compliance
-- **ESG Reporting**: Environmental reporting
-- **Citizen Services**: Complaint management, resolution tracking
-
-### 9. Digital Twin (Leaflet Map)
-- Interactive dark-themed map of Colombo
-- Real-time bin positions with fill-level color coding
-- Vehicle tracking with status indicators
-- Facility locations with type icons
-- Layer toggle controls
-- Entity click-to-detail panels
-
----
-
-## 🧠 AI Advisory Engine
-
-The platform includes a rule-based advisory engine that generates contextual operational recommendations:
-
-- **Overflow Cluster Detection**: Identifies zones with high bin overflow rates
-- **Low Collection Rate**: Flags underperforming collection zones
-- **Landfill Pressure**: Monitors capacity thresholds
-- **WTE Optimization**: Suggests furnace and intake adjustments
-- **Segregation Improvement**: Recommends waste sorting interventions
-- **Fleet Maintenance**: Predictive maintenance advisories
-- **Weather Impact**: Rainfall and heat-related operational adjustments
-- **Cost Optimization**: Budget and efficiency recommendations
-- **Emission Compliance**: Regulatory threshold monitoring
-- **Circular Economy**: Material recovery and recycling suggestions
-
-Each advisory includes root cause analysis (3-layer), evidence, actionable recommendations, projected impact, and executable action buttons.
-
----
-
-## 🔧 Data Simulation
-
-The simulation engine generates realistic data for all 15 Colombo zones:
-
-- **Hourly patterns**: Peak waste generation at 8AM, 12PM, 6PM
-- **Weekly cycles**: Weekday vs weekend variation
-- **Monthly trends**: Monsoon, festival, and seasonal effects
-- **Weather correlation**: Rainfall reduces collection efficiency
-- **Festival calendar**: Vesak, Poson, Christmas, New Year multipliers
-- **Random events**: Equipment failures, road blocks, sudden demand spikes
-- **Traffic patterns**: Zone-specific congestion multipliers
-
-### Colombo Zones Modeled
-Fort, Pettah, Borella, Maradana, Grandpass, Dematagoda, Kotahena, Mattakkuliya, Modara, Slave Island, Kollupitiya, Bambalapitiya, Wellawatte, Dehiwala, Mount Lavinia
-
----
-
-## 🛠️ Tech Stack
-
-| Layer       | Technology                                    |
-|-------------|-----------------------------------------------|
-| Frontend    | React 18, Tailwind CSS, Chart.js, Leaflet     |
-| Backend     | Node.js, Express.js                           |
-| Real-time   | Socket.io                                     |
-| Auth        | JWT + bcryptjs                                |
-| Maps        | Leaflet + CARTO dark tiles                    |
-| Charts      | Chart.js + react-chartjs-2                    |
-
----
-
-## 📁 Project Structure
-
-```
-wastemanagement_SL/
-├── package.json              # Root monorepo config
-├── README.md
-├── server/
-│   ├── package.json
-│   ├── .env                  # Server configuration
-│   ├── index.js              # Express server + Socket.io + all routes
-│   ├── models.js             # Mongoose schemas (reference)
-│   ├── simulation.js         # Data simulation engine
-│   └── aiAdvisory.js         # AI advisory engine
-├── client/
-│   ├── package.json
-│   ├── tailwind.config.js
-│   ├── postcss.config.js
-│   ├── public/
-│   │   └── index.html
-│   └── src/
-│       ├── index.js
-│       ├── index.css           # Tailwind + custom styles
-│       ├── App.js              # Router & auth
-│       ├── services/
-│       │   ├── api.js          # Axios API service
-│       │   └── socket.js       # Socket.io context
-│       ├── components/
-│       │   ├── Layout.js       # Main layout shell
-│       │   ├── AlertPanel.js   # Real-time alerts
-│       │   └── AdvisoryPanel.js # AI advisories
-│       └── pages/
-│           ├── Login.js
-│           ├── Dashboard.js
-│           ├── WasteCollection.js
-│           ├── FleetManagement.js
-│           ├── WTEPlant.js
-│           ├── Processing.js
-│           ├── Landfills.js
-│           ├── Sustainability.js
-│           ├── Enterprise.js
-│           └── DigitalTwin.js
-```
-
----
-
-## ⚠️ Notes
-
-- The platform runs entirely **in-memory** — no MongoDB installation required
-- Data is generated fresh on each server restart via the simulation engine
-- All GPS coordinates use real Colombo ward locations
-- The WTE plant model is based on the Kerawalapitiya facility specifications
-- Landfill data reflects Aruwakkalu and Karadiyana site characteristics
+## Integration layer
+`backend/app/integrations/registry.py` defines adapters with simulated modes for SAP Business One (Service Layer), HRMS, IoT/PLC (OPC UA/MQTT), CCTV (RTSP) and barcode/RFID. Setting the matching environment variable (`SAP_B1_URL`, `HRMS_URL`, `IOT_BROKER_URL`, `CV_VIDEO_SOURCE`) switches an adapter to live mode. No credentials are assumed. Facial recognition is not used: workforce activity is attributed by employee ID from production events, and location only by RFID zone reads.
