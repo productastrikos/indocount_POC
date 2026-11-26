@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Tabs } from '../components/ui';
-import { PageTitle, SimTag } from '../components/common';
+import { PageTitle } from '../components/common';
 import { useApp } from '../data/DataProvider';
 import MachinesTab, { MachineDrawer } from './production/MachinesTab';
 import PredictiveTab from './production/PredictiveTab';
@@ -24,7 +24,6 @@ export default function Maintenance() {
     <div className="space-y-4">
       <PageTitle title="Predictive Maintenance"
         subtitle="Failure probability, remaining useful life and the cheapest repair window for every machine — fibre openers, flappers, Garnett and blow-line motors, filling heads">
-        <SimTag />
       </PageTitle>
       <Tabs tabs={TABS} value={tab} onChange={setTab} variant="underline" />
       {tab === 'predictive' && <PredictiveTab factory={factory} onOpenMachine={setMachineId} />}

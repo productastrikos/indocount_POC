@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Badge, Button, Icon } from '../components/ui';
+import { Button, Icon } from '../components/ui';
 import { BrandMark } from '../components/layout/Sidebar';
 import { useApp } from '../data/DataProvider';
 import { api } from '../api/client';
 import { APP } from '../config';
 
 const ROLE_HINT = {
-  admin: 'Everything, including simulation controls and scenarios',
+  admin: 'Everything, including settings and user access',
   executive: 'Read-only management view and AI assistant',
   plant_manager: 'Production, optimization, quality, warehouse, dispatch',
   maintenance_manager: 'Machine health and maintenance work orders',
@@ -25,7 +25,7 @@ export default function Login() {
   const [backend, setBackend] = useState('checking');
 
   useEffect(() => {
-    api('/api/auth/demo-users').then((u) => { setUsers(u); setBackend('ok'); }).catch(() => setBackend('down'));
+    api('/api/auth/accounts').then((u) => { setUsers(u); setBackend('ok'); }).catch(() => setBackend('down'));
   }, []);
 
   const submit = async (username, password) => {
@@ -59,12 +59,11 @@ export default function Login() {
           </form>
           <div className="mt-auto pt-6 text-[11px] text-fg-faint space-y-1">
             <p>US operations: Kernersville NC · Phoenix AZ · Columbus OH</p>
-            <p className="flex items-center gap-1.5"><Badge tone="warning">SIMULATED</Badge> All data in this demo is simulated.</p>
             {backend === 'down' && <p className="text-danger">Backend not reachable. Start the API on port 8000.</p>}
           </div>
         </div>
         <div className="md:col-span-3 card p-5">
-          <p className="text-sm font-bold text-fg">Demo accounts</p>
+          <p className="text-sm font-bold text-fg">Sign in as</p>
           <p className="text-xs text-fg-faint mb-3">Role-based access: each role sees everything but can act only within its responsibilities.</p>
           <div className="grid sm:grid-cols-2 gap-2">
             {users.map((u) => (

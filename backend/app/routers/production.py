@@ -15,44 +15,48 @@ from ..db import WRITE_LOCK, get_db
 from ..services import calendar as cal
 from ..services import machine_health as mh
 from ..services import metrics, planning, readiness, workforce
-from ..services.common import business_rules, iso, log_event, next_number, pct
+from ..services.common import business_rules, iso, log_event, next_number
 from .core import commit_change
 from .serializers import Ctx, get_or_404, lookup, prod_order_dict
 
 router = APIRouter(prefix="/api/production")
 
 
-def _line_today(db, fids, day, now):
-    rows = db.scalars(select(m.ProductionHourly).where(m.ProductionHourly.factory_id.in_(fids), m.ProductionHourly.date == day))
-    agg = defaultdict(lambda: {"actual": 0.0, "down": 0.0, "last_hour": 0.0, "run": 0.0})
+def _last_hour(db, fids, day, now, rates: dict, detail: dict) -> tuple[int, dict]:
+    """Output of the last completed clock hour per line and that hour's plan (the hourly record's plan for the
+    productive minutes in the hour, less any "No orders" idle), so a break hour is not compared to a full hour."""
     last_h = now.hour - 1
-    for r in rows:
-        a = agg[r.line_id]
-        a["actual"] += r.actual
-        a["down"] += r.downtime_min
-        a["run"] += r.run_min
-        if r.hour == last_h:
-            a["last_hour"] += r.actual
-    return agg
+    agg = defaultdict(lambda: {"actual": 0.0, "planned": 0.0})
+    for r in db.scalars(select(m.ProductionHourly).where(m.ProductionHourly.factory_id.in_(fids),
+                                                         m.ProductionHourly.date == day, m.ProductionHourly.hour == last_h)):
+        x = agg[r.line_id]
+        x["actual"] += r.actual
+        x["planned"] += r.planned
+    for (lid, d, h, _sh), mins in detail["no_orders_by_hour"].items():
+        if d == day and h == last_h and lid in agg:
+            agg[lid]["planned"] = max(0.0, agg[lid]["planned"] - rates.get(lid, 0) * mins / 60)
+    return last_h, agg
 
 
 @router.get("/summary")
 def summary(factory: str = "ALL", date: str | None = None, shift: int | None = None, db: Session = Depends(get_db),
             user=Depends(current_user)):
     c = Ctx(db, factory, date, shift)
-    p = metrics.production(db, c.fids, c.day, c.shift, c.now)
     a, b = metrics.scope_window(c.day, c.shift, c.now)
-    dt = metrics.downtime(db, c.fids, a, b)
+    dd = metrics.downtime_detail(db, c.fids, a, b, c.now)
+    p = metrics.production(db, c.fids, c.day, c.shift, c.now, detail=dd)
     from ..services import quality
-    q = quality.quality_counts(db, c.fids, a)
+    q = quality.quality_counts(db, c.fids, a, metrics.quality_until(b, c.now))
     pipe = metrics.pipeline(db, c.fids, c.day, c.now)
     lines = p["lines"]
     open_pos = db.scalar(select(func.count()).select_from(m.ProductionOrder).where(
         m.ProductionOrder.factory_id.in_(c.fids), m.ProductionOrder.status.in_(planning.OPEN_PO))) or 0
     delayed = db.scalar(select(func.count()).select_from(m.ProductionOrder).where(
         m.ProductionOrder.factory_id.in_(c.fids), m.ProductionOrder.status == "Delayed")) or 0
-    return {"sim_time": iso(c.now), "production": {k: p[k] for k in ("actual", "target", "planned_to_date", "achievement_pct", "efficiency_pct", "on_track")},
-            "oee": metrics.oee(p, q), "downtime": dt, "downtime_total": round(sum(dt.values())),
+    return {"sim_time": iso(c.now), "production": {k: p[k] for k in ("actual", "target", "planned_to_date", "achievement_pct",
+                                                                    "efficiency_pct", "on_track", "started")},
+            "oee": metrics.oee(p, q), "downtime": dd["by_category"], "downtime_total": round(dd["total_min"]),
+            "idle_no_orders_min": round(dd["no_orders_min"]),
             "lines_running": sum(1 for ln in lines if ln.status == "Running"), "lines_total": len(lines),
             "open_orders": open_pos, "delayed_orders": delayed, "pipeline": pipe}
 
@@ -213,23 +217,27 @@ def reallocate_po(db: Session, po: m.ProductionOrder, now: datetime, user: str, 
 def lines(factory: str = "ALL", db: Session = Depends(get_db), user=Depends(current_user)):
     c = Ctx(db, factory)
     L = lookup(db)
-    agg = _line_today(db, c.fids, c.now.date(), c.now)
-    elapsed = cal.productive_minutes(datetime.combine(c.now.date(), cal.DAY_START), c.now)
-    full = cal.productive_minutes_per_shift() * 2
-    pipe = metrics.pipeline(db, c.fids, c.now.date(), c.now)["per_line"]
+    day = c.now.date()
+    p = metrics.production(db, c.fids, day, None, c.now)  # same per-line plan as the KPIs (no-orders idle excluded)
+    last_h, last = _last_hour(db, c.fids, day, c.now, {ln.id: ln.planned_rate for ln in p["lines"]}, p["downtime"])
+    pipe = metrics.pipeline(db, c.fids, day, c.now)["per_line"]
     out = []
-    for ln in db.scalars(select(m.ProductionLine).where(m.ProductionLine.factory_id.in_(c.fids)).order_by(m.ProductionLine.id)):
-        a = agg[ln.id]
+    for ln in sorted(p["lines"], key=lambda x: x.id):
+        x = p["by_line"][ln.id]
+        lh = last.get(ln.id)
         po = db.get(m.ProductionOrder, ln.current_po_id) if ln.current_po_id else None
         sku = L["skus"].get(ln.current_sku_id)
-        planned = ln.planned_rate * elapsed / 60
         out.append({"id": ln.id, "code": ln.code, "name": ln.name, "factory_id": ln.factory_id, "factory": L["factories"][ln.factory_id].code,
                     "line_type": ln.line_type, "status": ln.status, "status_reason": ln.status_reason,
                     "customer": L["customers"][sku.customer_id].name if sku else None, "sku": sku.code if sku else None,
                     "po": po.number if po else None, "po_id": po.id if po else None,
-                    "target_today": round(ln.planned_rate * full / 60), "planned_to_date": round(planned),
-                    "actual": int(a["actual"]), "output_per_hour": int(a["last_hour"]), "rated_per_hour": ln.planned_rate,
-                    "efficiency_pct": pct(a["actual"], planned), "downtime_min": round(a["down"]),
+                    "target_today": round(x["target"]), "planned_to_date": round(x["planned"]),
+                    "actual": int(x["actual"]), "rated_per_hour": ln.planned_rate,
+                    "last_hour": f"{last_h:02d}:00" if lh else None,
+                    "output_per_hour": int(lh["actual"]) if lh else None,
+                    "planned_last_hour": round(lh["planned"]) if lh else None,
+                    "efficiency_pct": x["efficiency_pct"], "downtime_min": round(x["down"]),
+                    "idle_no_orders_min": round(x["no_orders"]),
                     "active_shift": cal.shift_of(c.now), "constraint": pipe.get(ln.id, {}).get("binding"),
                     "constraint_loss_pct": pipe.get(ln.id, {}).get("loss_pct"),
                     "changeover_until": iso(ln.changeover_until)})
@@ -241,37 +249,56 @@ def line_detail(line_id: int, db: Session = Depends(get_db), user=Depends(curren
     ln = get_or_404(db, m.ProductionLine, line_id)
     c = Ctx(db, None)
     L = lookup(db)
+    day = c.now.date()
+    a, b = metrics.scope_window(day, None, c.now)
+    dd = metrics.downtime_detail(db, [ln.factory_id], a, b, c.now)
+    shift = metrics.current_shift(day, c.now) or 1
     hours = defaultdict(lambda: {"planned": 0.0, "actual": 0.0, "downtime": 0.0})
-    for r in db.scalars(select(m.ProductionHourly).where(m.ProductionHourly.line_id == ln.id, m.ProductionHourly.date == c.now.date())):
+    shift_output = 0.0
+    for r in db.scalars(select(m.ProductionHourly).where(m.ProductionHourly.line_id == ln.id, m.ProductionHourly.date == day)):
         h = hours[r.hour]
         h["planned"] += r.planned
         h["actual"] += r.actual
         h["downtime"] += r.downtime_min
+        if r.shift == shift:
+            shift_output += r.actual
+    for (lid, d, hr, _sh), mins in dd["no_orders_by_hour"].items():  # no-orders idle is neither plan nor downtime
+        if lid == ln.id and d == day and hr in hours:
+            hours[hr]["planned"] = max(0.0, hours[hr]["planned"] - ln.planned_rate * mins / 60)
+            hours[hr]["downtime"] = max(0.0, hours[hr]["downtime"] - mins)
     yday = defaultdict(float)
     for r in db.scalars(select(m.ProductionHourly).where(m.ProductionHourly.line_id == ln.id,
                                                          m.ProductionHourly.date == c.now.date() - timedelta(days=1))):
         yday[r.hour] += r.actual
     machines = [_machine_row(mc, L) for mc in db.scalars(select(m.Machine).where(m.Machine.line_id == ln.id))]
-    shift = cal.shift_of(c.now) or 1
-    p = sum(v["actual"] for v in hours.values())
-    wf = workforce.summary(db, [ln.factory_id], c.now.date(), c.now, p, line_id=ln.id, shift=shift)
+    # current-shift crew cost against current-shift output only
+    wf = workforce.summary(db, [ln.factory_id], day, c.now, shift_output, line_id=ln.id, shift=shift)
     queue_pos = list(db.scalars(select(m.ProductionOrder).where(
         m.ProductionOrder.line_id == ln.id, m.ProductionOrder.status.in_(planning.OPEN_PO)).order_by(m.ProductionOrder.sequence)))
     qorders = {o.id: o for o in db.scalars(select(m.CustomerOrder).where(
         m.CustomerOrder.id.in_([x.customer_order_id for x in queue_pos] or [0])))}
     queue = [prod_order_dict(x, L, qorders) for x in queue_pos]
-    day0 = datetime.combine(c.now.date(), datetime.min.time())
-    downtime = [{"category": d.category, "reason": d.reason, "start": iso(d.start), "end": iso(d.end), "minutes": round(d.minutes, 1)}
-                for d in db.scalars(select(m.DowntimeEvent).where(m.DowntimeEvent.line_id == ln.id, m.DowntimeEvent.start >= day0)
-                                    .order_by(m.DowntimeEvent.start.desc()).limit(25))]
+    downtime = []  # events overlapping today (incl. ones that started earlier or are still open), minutes inside today
+    if b > a:
+        for d in db.scalars(select(m.DowntimeEvent).where(
+                m.DowntimeEvent.line_id == ln.id, m.DowntimeEvent.start < b,
+                (m.DowntimeEvent.end.is_(None)) | (m.DowntimeEvent.end > a)).order_by(m.DowntimeEvent.start.desc()).limit(25)):
+            mins = cal.productive_minutes(max(d.start, a), min(d.end or c.now, b))
+            if mins <= 0:
+                continue
+            starved = metrics.is_no_orders(d.category, d.reason)
+            downtime.append({"category": metrics.NO_ORDERS_LABEL if starved else d.category, "reason": d.reason,
+                             "start": iso(d.start), "end": iso(d.end), "minutes": round(mins, 1),
+                             "machine_loss": not starved, "open": d.end is None})
     cos = [_co_row(x, L) for x in db.scalars(select(m.ChangeoverEvent).where(m.ChangeoverEvent.line_id == ln.id)
                                              .order_by(m.ChangeoverEvent.start.desc()).limit(10))]
-    return {"line": {"id": ln.id, "code": ln.code, "name": ln.name, "status": ln.status, "status_reason": ln.status_reason,
+    return {"date": day.isoformat(), "line": {"id": ln.id, "code": ln.code, "name": ln.name, "status": ln.status, "status_reason": ln.status_reason,
                      "planned_rate": ln.planned_rate, "factory": L["factories"][ln.factory_id].name, "line_type": ln.line_type,
                      "perf_modifier": ln.perf_modifier, "effective_rate": round(planning.PlanCtx(db, [ln.factory_id], c.now).line_rate(ln))},
             "hourly": [{"hour": f"{h:02d}:00", "planned": round(v["planned"]), "actual": round(v["actual"]),
                         "yesterday": round(yday.get(h, 0)), "downtime": round(v["downtime"])} for h, v in sorted(hours.items())],
-            "machines": machines, "workforce": {k: v for k, v in wf.items() if k != "below_benchmark"},
+            "machines": machines, "workforce": {**{k: v for k, v in wf.items() if k != "below_benchmark"},
+                                                "shift": shift, "pillows": int(shift_output)},
             "queue": queue, "downtime": downtime, "changeovers": cos}
 
 
@@ -279,26 +306,23 @@ def line_detail(line_id: int, db: Session = Depends(get_db), user=Depends(curren
 def hourly(factory: str = "ALL", date: str | None = None, shift: int | None = None, db: Session = Depends(get_db),
            user=Depends(current_user)):
     c = Ctx(db, factory, date, shift)
-    rows = defaultdict(lambda: {"actual": 0.0, "planned": 0.0, "down": 0.0})
-    q = select(m.ProductionHourly).where(m.ProductionHourly.factory_id.in_(c.fids), m.ProductionHourly.date == c.day)
-    if c.shift:
-        q = q.where(m.ProductionHourly.shift == c.shift)
-    for r in db.scalars(q):
-        x = rows[r.line_id]
-        x["actual"] += r.actual
-        x["down"] += r.downtime_min
-        started = datetime.combine(c.day, datetime.min.time()) + timedelta(hours=r.hour)
-        if started < c.now:
-            x["planned"] += r.planned if started + timedelta(hours=1) <= c.now else r.planned * (c.now - started).total_seconds() / 3600
+    # Same per-line plan to date as the KPIs: rate x planned productive minutes elapsed (the hour in progress
+    # counts only its elapsed productive minutes; "No orders" idle is not planned time).
+    p = metrics.production(db, c.fids, c.day, c.shift, c.now)
     L = lookup(db)
     table = []
-    for lid, x in rows.items():
-        ln = L["lines"][lid]
-        table.append({"line_id": lid, "line": ln.name, "factory": L["factories"][ln.factory_id].code,
-                      "actual": round(x["actual"]), "target": round(x["planned"]), "efficiency_pct": pct(x["actual"], x["planned"]),
-                      "downtime_min": round(x["down"]), "underperforming": x["planned"] > 50 and x["actual"] < 0.88 * x["planned"]})
-    table.sort(key=lambda r: r["efficiency_pct"])
-    return {"chart": metrics.hourly(db, c.fids, c.day, c.shift, c.now), "lines": table}
+    for ln in (p["lines"] if p["started"] else []):
+        x = p["by_line"][ln.id]
+        table.append({"line_id": ln.id, "line": ln.name, "factory": L["factories"][ln.factory_id].code,
+                      "actual": round(x["actual"]), "target": round(x["planned"]), "efficiency_pct": x["efficiency_pct"],
+                      "downtime_min": round(x["down"]), "idle_no_orders_min": round(x["no_orders"]),
+                      "underperforming": x["planned"] > 50 and x["actual"] < 0.88 * x["planned"]})
+    table.sort(key=lambda r: (r["efficiency_pct"] is None, r["efficiency_pct"] or 0))
+    dd = p["downtime"]
+    return {"chart": metrics.hourly(db, c.fids, c.day, c.shift, c.now), "lines": table,
+            "totals": {"actual": p["actual"], "planned_to_date": p["planned_to_date"], "efficiency_pct": p["efficiency_pct"]},
+            "downtime": dd["by_category"], "downtime_total": round(dd["total_min"]),
+            "idle_no_orders_min": round(dd["no_orders_min"])}
 
 
 def _machine_row(mc: m.Machine, L) -> dict:
@@ -443,10 +467,11 @@ def workforce_view(factory: str = "ALL", line_id: int | None = None, shift: int 
         q = q.where(m.ProductionHourly.shift == c.shift)
     pillows = float(db.scalar(q) or 0)
     wf = workforce.summary(db, c.fids, c.day, c.now, pillows, line_id=line_id, shift=c.shift)
-    by_line = defaultdict(lambda: {"deployed": 0, "required": 4, "units": 0, "idle_min": 0, "cost": 0.0})
+    crew = sum(workforce.LINE_ROLE_REQUIREMENT.values())
+    by_line = defaultdict(lambda: {"deployed": 0, "units": 0, "idle_min": 0, "cost": 0.0})
     L = lookup(db)
     for r in wf["employees"]:
-        if r["line_id"] and r["attendance"] in ("Present", "Late") and r["role"] in ("Filler", "Sewer", "Bagger"):
+        if r["line_id"] and r["attendance"] in ("Present", "Late") and r["role"] in workforce.LINE_ROLE_REQUIREMENT:
             b = by_line[r["line_id"]]
             b["deployed"] += 1
             b["idle_min"] += r["idle_min"]
@@ -460,7 +485,7 @@ def workforce_view(factory: str = "ALL", line_id: int | None = None, shift: int 
         line_out[lid] = float(a or 0)
     shifts = 1 if c.shift else max(1, sum(1 for sh in (1, 2) if cal.shift_bounds(c.day, sh)[0] <= c.now))
     lines_tbl = [{"line_id": lid, "line": L["lines"][lid].name, "factory": L["factories"][L["lines"][lid].factory_id].code,
-                  "deployed": b["deployed"], "required": 4 * shifts, "pillows": int(line_out[lid]),
+                  "deployed": b["deployed"], "required": crew * shifts, "pillows": int(line_out[lid]),
                   "output_per_worker": round(line_out[lid] / b["deployed"], 1) if b["deployed"] else 0,
                   "idle_hours": round(b["idle_min"] / 60, 1), "labour_cost": round(b["cost"], 2),
                   "cost_per_pillow": round(b["cost"] / line_out[lid], 3) if line_out[lid] else None}

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import models as m
@@ -17,27 +17,53 @@ from .core import commit_change
 from .serializers import Ctx, get_or_404, lookup, po_dict, shipment_dict
 
 router = APIRouter(prefix="/api/procurement")
-OPEN_PO = ("Open", "Partially Received", "Delayed")
+OPEN_PO = proc.OPEN_PO
+
+
+def _day0(now: datetime) -> datetime:
+    return datetime.combine(now.date(), datetime.min.time())
+
+
+def _ship_list(db: Session, fids: list[int], view: str | None, now: datetime) -> list[m.InboundShipment]:
+    """Shipment filters shared by the KPI tiles and the drill-down lists, so a tile always equals its list."""
+    S = m.InboundShipment
+    q = select(S).where(S.factory_id.in_(fids))
+    if view == "expected":
+        q = q.where(proc.expected_clause(now))
+    elif view == "pending":
+        q = q.where(S.status.in_(("Arrived", "Receiving")))
+    elif view == "delayed":  # ETA moved out beyond the tolerance (checked in Python: portable date arithmetic)
+        return [s for s in db.scalars(q.where(S.status.in_(("Scheduled", "In Transit")),
+                                              S.original_expected_arrival.is_not(None))) if proc.is_delayed(s)]
+    elif view == "received_today":  # goods receipt confirmed since midnight (sim time)
+        q = q.where(S.id.in_(select(m.GoodsReceipt.shipment_id).where(
+            m.GoodsReceipt.factory_id.in_(fids), m.GoodsReceipt.confirmed_at >= _day0(now))))
+    else:
+        q = q.where(S.status.notin_(("Received", "Discrepancy")) | (S.actual_arrival >= now - timedelta(days=7)))
+    return list(db.scalars(q))
 
 
 @router.get("/summary")
 def summary(factory: str = "ALL", db: Session = Depends(get_db), user=Depends(current_user)):
     c = Ctx(db, factory)
-    day0 = datetime.combine(c.now.date(), datetime.min.time())
     pos = list(db.scalars(select(m.PurchaseOrder).where(m.PurchaseOrder.factory_id.in_(c.fids), m.PurchaseOrder.status.in_(OPEN_PO))))
-    ships = list(db.scalars(select(m.InboundShipment).where(m.InboundShipment.factory_id.in_(c.fids))))
-    expected = [s for s in ships if s.status in ("Scheduled", "In Transit") and s.expected_arrival <= c.now + timedelta(days=7)]
-    pending = [s for s in ships if s.status in ("Arrived", "Receiving")]
-    delayed = [s for s in ships if s.status in ("Scheduled", "In Transit") and s.original_expected_arrival
-               and s.expected_arrival > s.original_expected_arrival + timedelta(hours=6)]
-    receipts = list(db.scalars(select(m.GoodsReceipt).where(m.GoodsReceipt.factory_id.in_(c.fids), m.GoodsReceipt.confirmed_at >= day0)))
+    receipts = list(db.scalars(select(m.GoodsReceipt).where(m.GoodsReceipt.factory_id.in_(c.fids),
+                                                            m.GoodsReceipt.confirmed_at >= _day0(c.now))))
     mats = inventory.material_rows(db, c.fids, c.now)
     return {
-        "open_pos": len(pos), "open_po_value": round(sum(p.ordered_qty * (p.unit_price or 0) for p in pos)),
-        "expected_inbound": len(expected), "received_today": len(receipts),
+        "open_pos": len(pos),
+        # value still to be delivered (pending qty x price), not the value already received
+        "open_po_value": round(sum(proc.pending_qty(p) * (p.unit_price or 0) for p in pos)),
+        "expected_inbound": len(_ship_list(db, c.fids, "expected", c.now)),
+        "received_today": len(_ship_list(db, c.fids, "received_today", c.now)),
         "received_today_lines": [{"number": r.number, "qty": r.accepted_qty, "material_id": r.material_id} for r in receipts],
-        "pending_receipts": len(pending), "shortages": sum(1 for r in mats if r["status"] in ("Critical", "Low")),
-        "critical": sum(1 for r in mats if r["status"] == "Critical"), "delayed": len(delayed),
+        "pending_receipts": len(_ship_list(db, c.fids, "pending", c.now)),
+        "shortages": sum(1 for r in mats if r["status"] in ("Critical", "Low")),
+        "critical": sum(1 for r in mats if r["status"] == "Critical"),
+        "untracked": sum(1 for r in mats if r["status"] == "Untracked"),
+        "delayed": len(_ship_list(db, c.fids, "delayed", c.now)),
+        "delay_tolerance_h": proc.DELAY_TOLERANCE.total_seconds() / 3600,
+        "expected_window_days": proc.EXPECTED_WINDOW.days,
     }
 
 
@@ -58,8 +84,8 @@ def list_pos(factory: str = "ALL", status: str | None = None, view: str | None =
         q = q.where(m.PurchaseOrder.supplier_id == supplier_id)
     L = lookup(db)
     rows = [po_dict(p, L) for p in db.scalars(q.order_by(m.PurchaseOrder.expected_date.desc()))]
-    order = {"Delayed": 0, "Open": 1, "Partially Received": 2, "Received": 3, "Cancelled": 4}
-    return sorted(rows, key=lambda r: (order.get(r["status"], 5), r["expected_date"] or ""))
+    order = {"Delayed": 0, "Open": 1, "Partially Received": 2, "Received": 3, proc.CLOSED_SHORT: 4, "Cancelled": 5}
+    return sorted(rows, key=lambda r: (order.get(r["status"], 6), r["expected_date"] or ""))
 
 
 @router.get("/purchase-orders/{po_id}")
@@ -68,7 +94,7 @@ def po_detail(po_id: int, db: Session = Depends(get_db), user=Depends(current_us
     L = lookup(db)
     sup = L["suppliers"][po.supplier_id]
     perf = next((s for s in insights.supplier_performance(db, [f for f in L["factories"]]) if s["supplier_id"] == sup.id), None)
-    ships = [shipment_dict(s, L) for s in db.scalars(select(m.InboundShipment).where(m.InboundShipment.po_id == po.id))]
+    ships = [_ship_row(s, L) for s in db.scalars(select(m.InboundShipment).where(m.InboundShipment.po_id == po.id))]
     receipts = [{"number": r.number, "received_qty": r.received_qty, "damaged_qty": r.damaged_qty, "shortage_qty": r.shortage_qty,
                  "accepted_qty": r.accepted_qty, "confirmed_at": iso(r.confirmed_at), "confirmed_by": r.confirmed_by, "notes": r.notes}
                 for r in db.scalars(select(m.GoodsReceipt).where(m.GoodsReceipt.po_id == po.id))]
@@ -131,26 +157,17 @@ def update_po(po_id: int, body: POUpdate, db: Session = Depends(get_db), user: m
         return po_dict(po, lookup(db))
 
 
+def _ship_row(s: m.InboundShipment, L) -> dict:
+    # "delayed" uses the same tolerance as the KPI tile and supplier reliability
+    return shipment_dict(s, L) | {"delayed": proc.is_delayed(s)}
+
+
 @router.get("/shipments")
 def shipments(factory: str = "ALL", view: str | None = None, db: Session = Depends(get_db), user=Depends(current_user)):
     c = Ctx(db, factory)
-    q = select(m.InboundShipment).where(m.InboundShipment.factory_id.in_(c.fids))
-    if view == "expected":
-        q = q.where(m.InboundShipment.status.in_(("Scheduled", "In Transit")))
-    elif view == "pending":
-        q = q.where(m.InboundShipment.status.in_(("Arrived", "Receiving")))
-    elif view == "delayed":
-        q = q.where(m.InboundShipment.status.in_(("Scheduled", "In Transit")),
-                    m.InboundShipment.expected_arrival > m.InboundShipment.original_expected_arrival)
-    elif view == "received_today":
-        q = q.where(m.InboundShipment.status.in_(("Received", "Discrepancy")),
-                    m.InboundShipment.actual_arrival >= c.now - timedelta(days=1))
-    else:
-        q = q.where((m.InboundShipment.status.notin_(("Received", "Discrepancy"))) |
-                    (m.InboundShipment.actual_arrival >= c.now - timedelta(days=7)))
     L = lookup(db)
     order = {"Arrived": 0, "Receiving": 1, "In Transit": 2, "Scheduled": 3, "Discrepancy": 4, "Received": 5}
-    rows = [shipment_dict(s, L) for s in db.scalars(q)]
+    rows = [_ship_row(s, L) for s in _ship_list(db, c.fids, view, c.now)]
     return sorted(rows, key=lambda r: (order.get(r["status"], 9), r["expected_arrival"] or ""))
 
 
@@ -167,7 +184,7 @@ def arrive(sid: int, body: ArriveIn, db: Session = Depends(get_db), user: m.User
         except ValueError as e:
             raise HTTPException(400, str(e))
         commit_change(db, "procurement")
-        return shipment_dict(s, lookup(db))
+        return _ship_row(s, lookup(db))
 
 
 @router.post("/shipments/{sid}/receipt/start")
@@ -179,7 +196,7 @@ def start_receipt(sid: int, db: Session = Depends(get_db), user: m.User = Depend
         except ValueError as e:
             raise HTTPException(400, str(e))
         commit_change(db, "procurement", recompute=False)
-        return shipment_dict(s, lookup(db))
+        return _ship_row(s, lookup(db))
 
 
 class ScanIn(BaseModel):
@@ -196,7 +213,7 @@ def scan(sid: int, body: ScanIn, db: Session = Depends(get_db), user: m.User = D
         except ValueError as e:
             raise HTTPException(400, str(e))
         db.commit()
-        return shipment_dict(s, lookup(db))
+        return _ship_row(s, lookup(db))
 
 
 class ConfirmIn(BaseModel):
@@ -220,7 +237,7 @@ def confirm(sid: int, body: ConfirmIn, db: Session = Depends(get_db), user: m.Us
                                                         m.MaterialStock.material_id == s.material_id))
         return {"receipt": {"number": gr.number, "expected_qty": gr.expected_qty, "received_qty": gr.received_qty,
                             "damaged_qty": gr.damaged_qty, "shortage_qty": gr.shortage_qty, "accepted_qty": gr.accepted_qty},
-                "shipment": shipment_dict(s, lookup(db)), "stock_on_hand": round(stock.on_hand, 1)}
+                "shipment": _ship_row(s, lookup(db)), "stock_on_hand": round(stock.on_hand, 1)}
 
 
 @router.get("/materials")

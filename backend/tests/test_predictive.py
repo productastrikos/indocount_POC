@@ -55,7 +55,7 @@ def pm_advisory(client, h, code, factory="ALL"):
 def test_01_machines_endpoint_contract(client, admin):
     d = get(client, admin, "/api/predictive/machines", factory="ALL")
     assert {"sim_time", "disclaimer", "kpis", "machines", "fleet", "related", "model"} <= set(d)
-    assert "illustrative" in d["disclaimer"].lower() and "simulated" in d["disclaimer"].lower()
+    assert d["disclaimer"] and "simulated" not in d["disclaimer"].lower()
     assert len(d["machines"]) == 96
     fleet = d["fleet"]
     assert {"risk_matrix", "forecast", "lowest_rul", "reliability", "plan", "unavailable"} <= set(fleet)

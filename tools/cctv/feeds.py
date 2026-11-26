@@ -112,6 +112,7 @@ CV = {
               per_event=2, capacity=48, base=22, descend=30, min_travel=30, debounce=10),
             z("sB", "station", "Packer B (behind display)", [[50, 140], [280, 140], [280, 275], [50, 275]]),
             z("sA", "station", "Packer A", [[290, 380], [720, 380], [720, 540], [290, 540]]),
+            z("lp1", "restricted", "FG aisle · badge-only", [[600, 190], [800, 190], [800, 262], [600, 262]]),
         ],
         "roi": [[[20, 0], [620, 0], [620, 300], [20, 300]]],
         "pillow_params": WHITE_BAGS, "recognition": DISPLAY_REC, "ocr_every": 2.0,
@@ -140,6 +141,7 @@ CV = {
         "zones": [
             z("cB", "carton", "Carton B", [[262, 290], [405, 290], [405, 362], [262, 362]], spec=4, hands=True, min_travel=30, debounce=18),
             z("sB", "station", "Packer B", [[330, 420], [570, 420], [570, 540], [330, 540]]),
+            z("lp1", "restricted", "Staging lane · badge-only", [[0, 262], [205, 262], [205, 380], [0, 380]]),
         ],
         "roi": [[[150, 170], [620, 170], [620, 400], [150, 400]]],
         "pillow_params": WHITE_PILLOWS, "recognition": CARTON_REC, "ocr_every": 2.0,
@@ -148,6 +150,7 @@ CV = {
         "zones": [
             z("cB", "carton", "Carton B", [[495, 320], [600, 320], [600, 398], [495, 398]], spec=4, hands=True, min_travel=30, debounce=18),
             z("sB", "station", "Packer B", [[540, 420], [770, 420], [770, 540], [540, 540]]),
+            z("lp1", "restricted", "Pillow staging · badge-only", [[120, 250], [340, 250], [340, 322], [120, 322]]),
         ],
         "roi": [[[380, 180], [760, 180], [760, 420], [380, 420]]],
         "pillow_params": WHITE_PILLOWS, "recognition": CARTON_REC, "ocr_every": 1.5,
@@ -156,6 +159,7 @@ CV = {
         "zones": [
             z("cA", "carton", "Carton A", [[538, 270], [662, 270], [662, 342], [538, 342]], spec=4, hands=True, min_travel=30, debounce=18),
             z("sA", "station", "Packer A", [[430, 400], [630, 400], [630, 540], [430, 540]]),
+            z("lp1", "restricted", "Carton staging · badge-only", [[810, 225], [960, 225], [960, 352], [810, 352]]),
         ],
         "roi": [[[400, 150], [840, 150], [840, 370], [400, 370]]],
         "pillow_params": WHITE_PILLOWS, "recognition": CARTON_REC, "ocr_every": 2.0,

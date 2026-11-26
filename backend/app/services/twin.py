@@ -52,6 +52,25 @@ STAGE_DEFS = [
     ("fg", "Finished goods racks", "pillows", ("Warehouse associate",), "Stored pallets available or reserved for orders"),
     ("dispatch", "Picking, staging & loading", "pillows", ("Warehouse associate", "Forklift operator"), "Picked for orders and loaded on trucks"),
 ]
+# Each person is counted at exactly one step of the flow strip, so the step crews add up to the people on the floor.
+# Line roles work their station; the floor roles are spread over their steps in badge order (the first forklift
+# operator palletizes and puts away, the second unloads at receiving, a third would load trucks; warehouse associates
+# alternate between picking/loading and the FG racks). Maintenance technicians are not part of the pillow flow.
+ROLE_STEPS = {"Filler": ("filling",), "Sewer": ("sewing",), "Bagger": ("bagging",), "Packaging operator": ("packing",),
+              "Supervisor": ("qa",), "Forklift operator": ("pallet", "raw", "dispatch"),
+              "Warehouse associate": ("dispatch", "fg")}
+ON_FLOOR = ("Station", "Away", "Break")   # badge read on the floor this shift (same as the RFID badges-on-floor count)
+
+
+def flow_steps(emps: list[m.Employee]) -> dict[int, str]:
+    """employee id → the one flow step that person is counted at."""
+    out, seen = {}, defaultdict(int)
+    for e in sorted(emps, key=lambda e: e.id):
+        steps = ROLE_STEPS.get(e.role)
+        if steps:
+            out[e.id] = steps[seen[e.role] % len(steps)]
+            seen[e.role] += 1
+    return out
 
 
 def current_shift(now: datetime) -> int:
@@ -263,6 +282,9 @@ def facility(db: Session, f: m.Factory, now: datetime) -> dict:
     stats = badge_stats(db, fids, day, now, shift)
     prod_rows = {r["id"]: r for r in workforce.employee_rows(db, fids, day, now, shift=shift)}
     workers = [_worker_row(e, stats.get(e.id), prod_rows.get(e.id), line_names, now, shift) for e in emps]
+    step_of = flow_steps(emps)
+    for w in workers:
+        w["flow_step"] = step_of.get(w["id"])
     wmap = {w["id"]: w for w in workers}
 
     def machine_row(mc):
@@ -360,12 +382,24 @@ def facility(db: Session, f: m.Factory, now: datetime) -> dict:
     fibre_kg = sum(s.on_hand for s in stock if mats.get(s.material_id) and mats[s.material_id].category in ("Fibre", "Foam"))
     shells = sum(s.on_hand for s in stock if mats.get(s.material_id) and mats[s.material_id].category == "Shell")
 
-    # racks: occupied slots by zone/bay/rack/level
+    # every storage location with its stored pallets: rack slots (zones A–C, 1 pallet each) and the zone D
+    # bulk floor lanes in front of the docks (several pallets each), so the twin draws every stored pallet
     occ = inventory.location_occupancy(db, fids)
     racks = defaultdict(list)
+    locations = []
+    zone_stock = defaultdict(lambda: {"pallets": 0, "capacity": 0, "locations": 0, "kind": "Rack"})
     for loc in db.scalars(select(m.StorageLocation).where(m.StorageLocation.factory_id == f.id).order_by(m.StorageLocation.id)):
-        if occ.get(loc.id):
+        n = occ.get(loc.id, 0)
+        locations.append({"code": loc.code, "zone": loc.zone, "bay": loc.bay, "rack": loc.rack, "level": loc.level,
+                          "kind": loc.kind, "capacity": loc.capacity_pallets, "pallets": n})
+        if n and loc.kind != "Floor":
             racks[loc.zone].append([loc.bay, loc.rack, loc.level])
+        z = zone_stock[loc.zone]
+        z["pallets"] += n
+        z["capacity"] += loc.capacity_pallets or 0
+        z["locations"] += 1
+        z["kind"] = loc.kind or "Rack"
+    slotted = sum(x["pallets"] for x in locations)
 
     # factory pillow flow with the people at each step
     tot = lambda key: sum(r["stages"][key]["today"] for r in line_rows)  # noqa: E731
@@ -397,10 +431,10 @@ def facility(db: Session, f: m.Factory, now: datetime) -> dict:
         "dispatch": sum(t.loaded_qty or 0 for t in departed_today if t.departed_at >= s_start),
     }
     flow = []
-    for key, label, unit, roles, desc in STAGE_DEFS:
-        crew = [w for w in workers if w["role"] in roles and w["state"] not in ("Absent", "Scheduled")]
-        if key == "fibre":
-            crew = []  # fillers are counted once, at filling
+    for key, label, unit, _roles, desc in STAGE_DEFS:
+        # fibre prep is tended by the fillers, who are counted once, at filling
+        crew = [w for w in workers if w["flow_step"] == key and w["state"] in ON_FLOOR]
+        roles = [r for r, steps in ROLE_STEPS.items() if key in steps]
         at = sum(1 for w in crew if w["state"] == "Station")
         st_h = sum(w["station_min"] for w in crew) / 60
         aw = sum(w["away_min"] for w in crew)
@@ -408,7 +442,7 @@ def facility(db: Session, f: m.Factory, now: datetime) -> dict:
         v = flow_vals[key]
         flow.append({"key": key, "label": label, "unit": v.get("unit", unit), "description": desc,
                      "now": v.get("now"), "today": v.get("today"), "extra": v.get("extra"),
-                     "roles": list(roles), "workers": len(crew), "at_station": at,
+                     "roles": roles, "workers": len(crew), "crew": [w["id"] for w in crew], "at_station": at,
                      "away": sum(1 for w in crew if w["state"] == "Away"),
                      "on_break": sum(1 for w in crew if w["state"] == "Break"),
                      "away_min": round(aw), "availability_pct": round(100 * st_h * 60 / (st_h * 60 + aw), 1) if st_h * 60 + aw else None,
@@ -427,16 +461,27 @@ def facility(db: Session, f: m.Factory, now: datetime) -> dict:
                     "blocked": [{"id": c.id, "code": c.hold_code, "line_id": c.line_id, "result": c.result,
                                  "detected": c.detected_count, "required": c.required_count} for c in blocked[:12]]},
         "palletizing": {"open_pallets": len(open_p), "pending_putaway": len(pend_p), "pillows": pallet_pillows},
-        "warehouse": {**fg, "racks": racks, "zones": ["A", "B", "C"], "bays": 4, "racks_per_bay": 3, "levels": 4},
+        "warehouse": {**fg, "racks": racks, "locations": locations, "zone_stock": zone_stock,
+                      "drawn_pallets": slotted, "unslotted_pallets": max(0, fg["stored_pallets"] - slotted),
+                      "zones": ["A", "B", "C"], "floor_zones": ["D"], "bays": 4, "racks_per_bay": 3, "levels": 4},
         "docks": docks,
         "receiving": [{"ref": s.ref, "carrier": s.carrier, "material": mats[s.material_id].code if s.material_id in mats else None,
                        "qty": s.qty, "status": s.status, "dock": s.dock} for s in inbound],
         "raw": {"fibre_kg": round(fibre_kg), "shells": round(shells)},
         "flow": flow,
+        "flow_people": {"on_floor": sum(1 for w in workers if w["state"] in ON_FLOOR),
+                        "in_flow": sum(s["workers"] for s in flow),
+                        "outside_flow": sum(1 for w in workers if w["state"] in ON_FLOOR and w["flow_step"] is None)},
         "workers": workers,
         "rfid": rfid_summary(workers, line_rows, stats, shift, now),
-        "disclaimer": "RFID badge reads and all operations are simulated for this demo.",
+        "loss": _loss_cases(db, f),
+        "disclaimer": "",
     }
+
+
+def _loss_cases(db: Session, f: m.Factory) -> list[dict]:
+    from . import loss
+    return loss.facility_cases(db, f)
 
 
 def rfid_summary(workers: list[dict], line_rows: list[dict], stats: dict, shift: int, now: datetime) -> dict:
@@ -516,7 +561,7 @@ def worker(db: Session, e: m.Employee, now: datetime) -> dict:
     return {
         "sim_time": iso(now), "worker": row, "line": line.name if line else None,
         "shift_window": [iso(s_start), iso(s_end)],
-        "propensity_note": "Badge reads simulated; scheduled breaks and lunch are never counted as time away.",
+        "propensity_note": "Scheduled breaks and lunch are never counted as time away.",
         "timeline": [{"state": iv.state, "zone": iv.zone, "reader": iv.reader, "reason": iv.reason,
                       "start": iso(iv.start), "end": iso(iv.end), "open": iv.end is None,
                       "minutes": round(_mins(iv.start, min(iv.end or now, now)), 1)} for iv in ivs],

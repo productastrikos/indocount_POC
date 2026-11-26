@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     sim_autostart: bool = True
     sim_tick_seconds: float = 3.0
     sim_start_hour: int = 11          # simulated clock starts at 11:00 on the seed day
-    sim_default_speed: int = 1        # simulated minutes per tick
+    sim_default_speed: int = 1        # simulated minutes per tick (when not real-time)
+    sim_realtime: bool = True         # plant clock follows the server's wall clock (lines run 06:00-23:00)
     sim_seed: int = 42
 
     # Business rules (illustrative, configurable)

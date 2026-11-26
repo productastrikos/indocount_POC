@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { Icon } from '../ui';
 import { useApi } from '../../hooks/useApi';
 import CctvPlayer from './CctvPlayer';
@@ -60,7 +61,7 @@ function Timeline({ d, f, onSeek }) {
         ctx.fillRect(x(e.f), 0, Math.max(2, x(e.end * d.fps) - x(e.f)), 5);
         ctx.globalAlpha = 1;
       }
-      ctx.fillRect(x(e.f) - 1, 0, 2.5, e.type === 'pillow_in' ? 12 : 8);
+      ctx.fillRect(x(e.f) - 1, 0, e.type === 'restricted' ? 3.5 : 2.5, e.type === 'pillow_in' || e.type === 'restricted' ? H : 8);
     });
     ctx.fillStyle = '#f8fafc';
     ctx.fillRect(x(f) - 1, 0, 2, H);
@@ -96,7 +97,7 @@ function ActBar({ pct }) {
   );
 }
 
-export default function CctvViewer({ feedId, feeds = [], onClose, onOpenWorker }) {
+export default function CctvViewer({ feedId, feeds = [], onClose, onOpenWorker, startAt }) {
   useSimClock();
   const [id, setId] = useState(feedId);
   const detail = useApi(id ? `/api/cctv/feeds/${id}` : null, {}, { every: 3 });
@@ -107,7 +108,16 @@ export default function CctvViewer({ feedId, feeds = [], onClose, onOpenWorker }
   const [selected, setSelected] = useState(null);
   const [pos, onFrame] = useThrottledFrame();
   const seek = useRef(null);
+  const navigate = useNavigate();
   const ids = useMemo(() => assignIdentities(d, detail.data?.workers), [d, detail.data?.workers]);
+  const lp = useApi(feed?.camera ? '/api/loss/incidents' : null, { camera: feed?.camera, limit: 6 }, { every: 5 });
+  // opened from a loss-prevention case: start a little before the vision event
+  const startedAt = useRef(null);
+  useEffect(() => {
+    if (startAt == null || !d || startedAt.current === id) return undefined;
+    const t = setTimeout(() => { seek.current?.(Math.max(0, startAt - 1.5)); startedAt.current = id; }, 350);
+    return () => clearTimeout(t);
+  }, [startAt, d, id]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -168,7 +178,7 @@ export default function CctvViewer({ feedId, feeds = [], onClose, onOpenWorker }
         <div className="min-w-0">
           <p className="text-[13px] font-bold truncate">{feed.camera} · {feed.title}</p>
           <p className="text-[11px] truncate" style={{ color: 'var(--color-text-faint)' }}>
-            {feed.factory_name || feed.factory} · {feed.line}{feed.station ? ` · ${feed.station}` : ''} · {feed.ptz ? 'PTZ tour' : 'Fixed camera'} · recorded footage, edge-inference replay
+            {feed.factory_name || feed.factory} · {feed.line}{feed.station ? ` · ${feed.station}` : ''} · {feed.ptz ? 'PTZ tour' : 'Fixed camera'} · edge inference
           </p>
         </div>
         <div className="flex-1" />
@@ -224,6 +234,53 @@ export default function CctvViewer({ feedId, feeds = [], onClose, onOpenWorker }
         </div>
 
         <aside className="cctv-side">
+          {(lp.data?.incidents?.length > 0 || d?.zones.some((z) => z.kind === 'restricted')) && (
+            <div className="cctv-panel" style={{ borderColor: lp.data?.incidents?.some((c) => c.status !== 'Resolved') ? 'rgba(239,68,68,0.55)' : undefined }}>
+              <h4 style={{ color: '#fca5a5' }}>Loss prevention</h4>
+              {d?.zones.filter((z) => z.kind === 'restricted').map((z) => {
+                const hits = d.ev.filter((e) => e.type === 'restricted' && e.zone === z.id);
+                const unb = hits.filter((e) => !e.badged);
+                return (
+                  <p key={z.id} className="text-[11px] mb-1.5" style={{ color: 'var(--color-text-muted)' }}>
+                    <b style={{ color: '#fecaca' }}>{z.name}</b> · {hits.length} entr{hits.length === 1 ? 'y' : 'ies'} in this clip
+                    {unb.length ? `, ${unb.length} without a badge read` : ', all badged'}
+                    {unb.length > 0 && (
+                      <>
+                        {' · '}
+                        {unb.slice(0, 4).map((e) => (
+                          <button key={e.f} type="button" className="underline mr-1.5" style={{ color: '#fca5a5' }}
+                            onClick={() => seek.current?.(Math.max(0, e.t - 1.5))}>{e.t.toFixed(1)} s</button>
+                        ))}
+                      </>
+                    )}
+                  </p>
+                );
+              })}
+              {(lp.data?.incidents || []).map((c) => (
+                <div key={c.id} className="cctv-row" style={{ alignItems: 'flex-start' }}>
+                  <span className="cctv-avatar" style={{ background: c.status === 'Resolved' ? '#475569' : c.severity === 'critical' ? '#dc2626' : '#d97706', fontSize: 9 }}>LP</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-semibold truncate">{c.ref} · {c.title}</span>
+                    <span className="block text-[10.5px]" style={{ color: 'var(--color-text-faint)' }}>
+                      {c.outcome ? `Closed · ${c.outcome}` : `${c.status}${c.next_step ? ` · next: ${c.next_step.text}` : ''}`}
+                    </span>
+                    <span className="flex gap-2 mt-0.5 text-[10.5px]">
+                      {c.feed_id === id && c.feed_t != null && (
+                        <button type="button" className="underline" style={{ color: '#7dd3fc' }} onClick={() => seek.current?.(Math.max(0, c.feed_t - 1.5))}>Jump to event</button>
+                      )}
+                      <button type="button" className="underline" style={{ color: '#7dd3fc' }}
+                        onClick={() => { onClose(); navigate(`/loss-prevention?focus=loss_incident:${c.id}`); }}>Open case</button>
+                    </span>
+                  </span>
+                </div>
+              ))}
+              <p className="text-[10.5px] mt-1.5" style={{ color: 'var(--color-text-faint)' }}>
+                Vision only checks the badge-only zone for an RFID read and retains the clip as evidence. It never names
+                or accuses the person on camera: security verifies against badge logs and the shift roster.
+              </p>
+            </div>
+          )}
+
           {rec && (
             <div className="cctv-panel">
               <h4>{rec.customer ? 'Customer identified' : 'Product identified'}</h4>
@@ -333,6 +390,10 @@ export default function CctvViewer({ feedId, feeds = [], onClose, onOpenWorker }
                 if (e.type === 'left_station') text = `${who} left ${z?.name || 'station'} for ${e.seconds}s`;
                 if (e.type === 'label_read') text = `Label read: ${e.text}${e.customer ? ` → ${e.customer}` : ''}`;
                 if (e.type === 'line_cross') text = 'Pillow passed the count line';
+                if (e.type === 'restricted') {
+                  text = e.badged ? `Badge read · access to ${z?.name || 'restricted zone'} logged`
+                    : `No badge read in ${z?.name || 'restricted zone'} (${e.dwell ?? '—'} s) — security verifying`;
+                }
                 return (
                   <div key={`${e.type}-${e.f}-${i}`} className="cctv-log">
                     <time>{e.ago < 1 ? 'now' : `${Math.round(e.ago)}s ago`}</time>
@@ -351,11 +412,10 @@ export default function CctvViewer({ feedId, feeds = [], onClose, onOpenWorker }
                 {Object.entries(d.models).map(([k, v]) => (
                   <div key={k} className="flex justify-between gap-3"><span style={{ color: 'var(--color-text-faint)' }}>{k}</span><span className="text-right">{v}</span></div>
                 ))}
-                <div className="flex justify-between gap-3"><span style={{ color: 'var(--color-text-faint)' }}>frames</span><span>{d.n} @ {d.fps} fps · {d.dur}s loop</span></div>
+                <div className="flex justify-between gap-3"><span style={{ color: 'var(--color-text-faint)' }}>frames</span><span>{d.fps} fps</span></div>
               </div>
               <p className="text-[10.5px] mt-2" style={{ color: 'var(--color-text-faint)' }}>
-                Plant-floor footage analysed frame by frame; results are replayed in sync with the video exactly as an edge
-                device streams them. Counts continue across loops of the clip.
+                Every frame is analysed on the edge device; detections, tracks and counts stream with the video.
               </p>
             </div>
           )}

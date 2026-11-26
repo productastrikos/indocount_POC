@@ -65,6 +65,27 @@ class SimRunner:
     def stop(self):
         self._stop.set()
 
+    @staticmethod
+    def _follow_wall_clock(db, st, engine, t0, budget_s: float = 1.5) -> bool:
+        """Advance the plant clock to the wall clock (minute resolution), catching up in 5-minute steps.
+        Overnight (23:00-06:00) the lines are closed: the clock waits instead of jumping to the next morning."""
+        from datetime import datetime as _dt, timedelta as _td
+        from .services import calendar as cal
+        target = _dt.now().replace(second=0, microsecond=0)
+        moved = False
+        while st.sim_time < target and time.perf_counter() - t0 < budget_s:
+            a = st.sim_time
+            day_start = _dt.combine(a.date(), cal.DAY_START)
+            day_end = _dt.combine(a.date(), cal.DAY_END)
+            if a >= day_end and target < day_start + _td(days=1):
+                break  # closed for the night
+            if a < day_start and target < day_start:
+                break
+            minutes = 5.0 if a >= day_end or a < day_start else min(5.0, (min(target, day_end) - a).total_seconds() / 60)
+            engine.step(db, max(minutes, 1.0) if minutes > 0 else 1.0)
+            moved = True
+        return moved
+
     def _run(self):
         from .simulation import engine
         interval = get_settings().sim_tick_seconds
@@ -77,7 +98,11 @@ class SimRunner:
                         if not st or not st.running:
                             continue
                         t0 = time.perf_counter()
-                        engine.step(db, st.speed or 1)
+                        if get_settings().sim_realtime:
+                            if not self._follow_wall_clock(db, st, engine, t0):
+                                continue
+                        else:
+                            engine.step(db, st.speed or 1)
                         db.commit()
                         self.last_tick_ms = round((time.perf_counter() - t0) * 1000)
                         msg = {"type": "tick", "sim_time": iso(st.sim_time), "tick": st.tick, "speed": st.speed,

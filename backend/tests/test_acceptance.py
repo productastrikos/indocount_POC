@@ -70,14 +70,17 @@ def test_01_procurement_to_production(client, admin):
     assert res["receipt"]["shortage_qty"] == 200
     assert res["shipment"]["status"] == "Discrepancy"
     after = next(r for r in get(client, admin, "/api/procurement/materials", factory="KNV") if r["code"] == "F-101")
-    assert after["available"] == pytest.approx(before["available"] + s["qty"] - 200, abs=1)
+    assert after["on_hand"] == pytest.approx(before["on_hand"] + s["qty"] - 200, abs=1)
+    # the materials page splits on-hand stock into what open production orders still need and the free rest
+    assert after["available"] == pytest.approx(max(0, after["on_hand"] - after["reserved"]), abs=1)
     disc = get(client, admin, "/api/procurement/discrepancies", factory="KNV")
     assert any(d["kind"] == "Shortage" and d["qty"] == 200 and d["po"] == s["po"] for d in disc)
     # Production order requirements now see the new stock.
     po = next(p for p in get(client, admin, "/api/production/orders", factory="KNV") if p["sku"] == "WMT-MS-Q" and p["status"] != "Completed")
     bom = get(client, admin, f"/api/production/orders/{po['id']}")["materials"]
     fill = next(b for b in bom if b["code"] == "F-101")
-    assert fill["available"] == pytest.approx(after["available"], abs=1) and fill["sufficient"]
+    # the order's BOM shows the physical stock it can draw on, i.e. the materials page's on-hand figure
+    assert fill["available"] == pytest.approx(after["on_hand"], abs=1) and fill["sufficient"]
 
 
 def test_02_production_to_quality(client, admin):
@@ -136,22 +139,26 @@ def test_04_quality_to_warehouse(client, admin):
 
 
 def test_05_warehouse_to_dispatch(client, admin):
-    # Allocate stored finished goods to an order with an open requirement, pick, and watch readiness move.
+    # The simulation reserves stock itself (an order's own production at put-away, free stock within 72 h).
+    # If an order can still take free stock, allocate it by hand; then pick its reservations and watch readiness move.
     alloc = get(client, admin, "/api/warehouse/allocation", factory="ALL", days=10)
-    row = next(r for r in alloc["orders"] if r["pending_requirement"] > 0 and r["sku_unallocated"] > 0)
-    before = get(client, admin, f"/api/dispatch/orders/{row['order_id']}")["order"]
-    res = post(client, admin, "/api/warehouse/allocate", {"order_id": row["order_id"]})
-    assert res["allocated_cartons"] > 0
-    picks = [r for r in get(client, admin, "/api/warehouse/picking") if r["order_id"] == row["order_id"]]
+    row = next((r for r in alloc["orders"] if r["pending_requirement"] > 0 and r["sku_unallocated"] > 0), None)
+    oid = row["order_id"] if row else get(client, admin, "/api/warehouse/picking")[0]["order_id"]
+    before = get(client, admin, f"/api/dispatch/orders/{oid}")["order"]
+    if row:
+        res = post(client, admin, "/api/warehouse/allocate", {"order_id": oid})
+        assert res["allocated_cartons"] > 0
+    picks = [r for r in get(client, admin, "/api/warehouse/picking") if r["order_id"] == oid]
     assert picks
     for p in picks:
         post(client, admin, f"/api/warehouse/picking/{p['id']}/confirm")
-    after = get(client, admin, f"/api/dispatch/orders/{row['order_id']}")["order"]
-    assert after["readiness"]["allocation"] > before["readiness"]["allocation"]
+    after = get(client, admin, f"/api/dispatch/orders/{oid}")["order"]
+    if row:
+        assert after["readiness"]["allocation"] > before["readiness"]["allocation"]
     assert after["readiness"]["picking"] > before["readiness"]["picking"]
     assert after["readiness_pct"] > before["readiness_pct"]
-    if after["blocking"] is not None:   # the remainder is linked to its production order
-        assert any(r["order_id"] == row["order_id"] for r in get(client, admin, "/api/warehouse/allocation", days=10)["orders"])
+    if after["blocking"] is not None and after["available_inventory"] < after["qty"]:   # the remainder is linked to its production order
+        assert any(r["order_id"] == oid for r in get(client, admin, "/api/warehouse/allocation", days=10)["orders"])
 
     # A fully picked order goes through dock check-in, loading, departure and delivery.
     ready = next(o for o in get(client, admin, "/api/dispatch/orders", factory="ALL")
@@ -247,17 +254,27 @@ def test_08_ai_assistant_matches_records(client, admin):
 
 def test_09_live_speed_packing_keeps_up(client, admin):
     """At live speed (1-minute ticks) every packing station, including 60-pillow Gaylords, keeps packing."""
-    gaylord = {s["code"] for s in get(client, admin, "/api/quality/specs") if s["pillows_per_carton"] >= 48}
+    from sqlalchemy import select
+    from app.db import SessionLocal
+    from app import models as mm
+    from app.services.quality import packaging_available
 
-    def gaylord_cartons():
-        return sum(1 for c in get(client, admin, "/api/quality/cartons", factory="ALL", limit=300) if c["sku"] in gaylord)
+    def waiting():
+        """Production orders with at least one full carton waiting at a station that has packaging in stock."""
+        with SessionLocal() as s:
+            return {po.id: (po.packed_qty, po.sku.pillows_per_carton) for po in s.scalars(
+                    select(mm.ProductionOrder).where(mm.ProductionOrder.pack_queue > 0))
+                    if po.pack_queue >= po.sku.pillows_per_carton and packaging_available(s, po.factory_id, po.sku)}
 
-    before = gaylord_cartons()
+    before = waiting()
     q0 = get(client, admin, "/api/quality/summary", factory="ALL")
     for _ in range(40):
         post(client, admin, "/api/sim/step", {"speed": 1})
     q1 = get(client, admin, "/api/quality/summary", factory="ALL")
-    assert gaylord_cartons() > before
+    with SessionLocal() as s:
+        for po_id, (packed, ppc) in before.items():
+            po = s.get(mm.ProductionOrder, po_id)
+            assert po.packed_qty > packed or po.pack_queue < ppc, f"{po.number} ({ppc}/carton) did not pack in 40 min"
     produced = q1["workflow"][0]["qty"] - q0["workflow"][0]["qty"]
     assert q1["pack_queue"] - q0["pack_queue"] < max(200, produced * 0.5)   # queue does not run away
     assert all(s["qty"] >= 0 for s in q1["workflow"])

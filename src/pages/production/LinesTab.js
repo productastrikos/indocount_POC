@@ -25,8 +25,15 @@ function LineTile({ ln, onOpen }) {
         <div><p className="label-caps">Actual</p><p className="text-sm font-bold text-fg tabular-nums">{num(ln.actual)}</p></div>
         <div><p className="label-caps">Target</p><p className="text-sm font-semibold text-fg-muted tabular-nums">{num(ln.target_today)}</p></div>
         <div><p className="label-caps">Eff.</p><p className="text-sm"><Eff value={ln.efficiency_pct} /></p></div>
-        <div><p className="label-caps">Per hour</p><p className="text-[12px] font-semibold text-fg tabular-nums">{num(ln.output_per_hour)}<span className="text-fg-faint font-normal">/{num(ln.rated_per_hour)}</span></p></div>
-        <div><p className="label-caps">Downtime</p><p className="text-[12px] font-semibold text-fg tabular-nums">{num(ln.downtime_min)} min</p></div>
+        <div title={ln.last_hour ? `Output in ${ln.last_hour}–${String(Number(ln.last_hour.slice(0, 2)) + 1).padStart(2, '0')}:00 vs that hour's plan (breaks excluded; rated ${num(ln.rated_per_hour)}/h)` : `Rated ${num(ln.rated_per_hour)}/h`}>
+          <p className="label-caps">Last hour</p>
+          <p className="text-[12px] font-semibold text-fg tabular-nums">{num(ln.output_per_hour)}<span className="text-fg-faint font-normal">/{num(ln.planned_last_hour)}</span></p>
+        </div>
+        <div title={ln.idle_no_orders_min > 0 ? `${num(ln.idle_no_orders_min)} min idle with no production order (not a machine loss, not planned time)` : undefined}>
+          <p className="label-caps">Downtime</p>
+          <p className="text-[12px] font-semibold text-fg tabular-nums">{num(ln.downtime_min)} min</p>
+          {ln.idle_no_orders_min > 0 && <p className="text-[10px] text-fg-faint tabular-nums">+{num(ln.idle_no_orders_min)} idle · no orders</p>}
+        </div>
         <div><p className="label-caps">Shift</p><p className="text-[12px] font-semibold text-fg">{ln.active_shift || '—'}</p></div>
       </div>
       {ln.constraint && (
@@ -99,10 +106,11 @@ export function LineDrawer({ id, onClose, onOpenMachine, onOpenOrder }) {
             { key: 'temp', header: 'Temp °C', render: (m) => <span className="tabular-nums">{m.temperature} <span className="text-fg-faint">/ {m.baseline.temperature}</span></span> },
           ]} />
 
-          <Sub>Workforce · current shift</Sub>
+          <Sub>Workforce · shift {wf.shift} line crew</Sub>
           <KV cols={4} items={[
-            ['Deployed / required', `${wf.workers_deployed} / ${wf.workers_required}`], ['Utilization', pct(wf.labour_utilization_pct)],
-            ['Idle', `${num(wf.idle_hours, 1)} h`], ['Cost / pillow', wf.labour_cost_per_pillow != null ? `$${wf.labour_cost_per_pillow.toFixed(3)}` : '—'],
+            ['Crew deployed / required', `${wf.workers_deployed} / ${wf.workers_required}`], ['Utilization', pct(wf.labour_utilization_pct)],
+            ['Idle', `${num(wf.idle_hours, 1)} h`],
+            ['Cost / pillow', wf.labour_cost_per_pillow != null ? `$${wf.labour_cost_per_pillow.toFixed(3)} (${num(wf.pillows)} this shift)` : '—'],
           ]} />
           <div className="mt-2">
             <DataTable rowKey="id" rows={present} emptyText="No one on shift." columns={[
@@ -132,10 +140,10 @@ export function LineDrawer({ id, onClose, onOpenMachine, onOpenOrder }) {
               {data.downtime.length === 0 ? <Empty>No downtime today.</Empty> : (
                 <ul className="space-y-1.5">
                   {data.downtime.map((d, i) => (
-                    <li key={i} className="tile text-[11px] flex gap-2">
-                      <span className="font-mono text-fg-faint">{hhmm(d.start)}</span>
-                      <span className="flex-1 min-w-0"><b className="text-fg">{d.category}</b> · <span className="text-fg-muted">{d.reason}</span></span>
-                      <span className="font-semibold text-fg tabular-nums">{num(d.minutes, 1)} min</span>
+                    <li key={i} className="tile text-[11px] flex gap-2" title={d.machine_loss === false ? 'No production order queued: not a machine loss and not planned time' : undefined}>
+                      <span className="font-mono text-fg-faint">{d.start?.slice(0, 10) === data.date ? hhmm(d.start) : dayTime(d.start)}</span>
+                      <span className="flex-1 min-w-0"><b className={d.machine_loss === false ? 'text-fg-muted' : 'text-fg'}>{d.category}</b> · <span className="text-fg-muted">{d.reason}{d.open ? ' (ongoing)' : ''}</span></span>
+                      <span className="font-semibold text-fg tabular-nums" title="Productive minutes inside today">{num(d.minutes, 1)} min</span>
                     </li>
                   ))}
                 </ul>

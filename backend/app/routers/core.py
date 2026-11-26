@@ -48,7 +48,7 @@ def me(user: m.User = Depends(current_user)):
     return user_dict(user)
 
 
-@router.get("/auth/demo-users")
+@router.get("/auth/accounts")
 def demo_users():
     return [{"username": u, "name": n, "role": r, "role_label": ROLES[r]["label"], "password": p} for u, n, r, p in DEMO_USERS]
 
@@ -90,7 +90,7 @@ def sim_state_dict(st: m.SimState) -> dict:
 
 
 # ─── simulation control ─────────────────────────────────────────────────
-@router.get("/sim/state")
+@router.get("/sim/state", include_in_schema=False)
 def sim_state(db: Session = Depends(get_db), user: m.User = Depends(current_user)):
     return sim_state_dict(state(db))
 
@@ -99,7 +99,7 @@ class SpeedIn(BaseModel):
     speed: int
 
 
-@router.post("/sim/{action}")
+@router.post("/sim/{action}", include_in_schema=False)
 def sim_control(action: str, body: SpeedIn | None = None, db: Session = Depends(get_db), user=Depends(require("simulation"))):
     with WRITE_LOCK:
         st = state(db)
@@ -143,7 +143,7 @@ class ScenarioIn(BaseModel):
     material_code: str | None = None
 
 
-@router.post("/sim/scenario/run")
+@router.post("/sim/scenario/run", include_in_schema=False)
 def run_scenario(body: ScenarioIn, db: Session = Depends(get_db), user=Depends(require("simulation"))):
     with WRITE_LOCK:
         params = {"factory_id": body.factory_id}
@@ -163,7 +163,7 @@ def run_scenario(body: ScenarioIn, db: Session = Depends(get_db), user=Depends(r
         return {"message": msg, "sim": sim_state_dict(state(db))}
 
 
-@router.get("/sim/scenarios")
+@router.get("/sim/scenarios", include_in_schema=False)
 def list_scenarios(user=Depends(current_user)):
     return [{"kind": k, "label": v[0]} for k, v in scenarios.SCENARIOS.items()]
 

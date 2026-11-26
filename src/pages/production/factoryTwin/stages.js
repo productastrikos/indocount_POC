@@ -96,6 +96,14 @@ const ALERT_STAGE = {
   ship_risk: 'dispatch', detention: 'dispatch',
 };
 
+// loss-prevention cases carry `twin_stage`; older payloads / unknown keys fall back on the layout area
+const LOSS_AREA_STAGE = {
+  material_store: 'raw', receiving: 'raw', line: 'filling', qa: 'qa', fg: 'fg', staging: 'pallet', dock: 'dispatch', gate: 'fg',
+};
+/** Stage key of a loss-prevention case (from /api/twin/facility → loss[]). */
+export const lossStage = (c) => (STAGE_BY_KEY[c?.twin_stage] ? c.twin_stage : LOSS_AREA_STAGE[c?.area] || 'fg');
+export const SEV_RANK = { critical: 0, high: 1, warning: 2, medium: 3, info: 4, low: 5 };
+
 /** machine code → stage key, from the live facility payload */
 export function machineStageIndex(fac) {
   const out = {};
@@ -103,7 +111,8 @@ export function machineStageIndex(fac) {
   return out;
 }
 
-/** Group S!AP advisories and plant alerts by stage. */
+/** Group S!AP advisories, loss-prevention cases (fac.loss) and plant alerts by stage.
+    Loss items carry `lossId` so the UI can open the case drawer. */
 export function risksByStage(fac, advisories = [], alerts = []) {
   const mIdx = machineStageIndex(fac);
   const out = Object.fromEntries(STAGES.map((s) => [s.key, []]));
@@ -119,7 +128,16 @@ export function risksByStage(fac, advisories = [], alerts = []) {
     else if (/energy/i.test(a.category || '')) k = 'carding';
     if (k) push(k, { id: a.id, source: 'S!AP', severity: a.severity, title: a.title, text: a.recommendation || a.summary, category: a.category });
   });
+  (fac?.loss || []).forEach((c) => {
+    push(lossStage(c), {
+      id: `lp-${c.id}`, lossId: c.id, source: 'Loss prevention', severity: c.severity, title: c.title,
+      ref: c.ref, zone: c.zone, next: c.next_step?.text || null,
+      text: c.next_step?.text ? `${c.next_step.text} (${c.ref})` : null,
+    });
+  });
   alerts.forEach((al) => {
+    // loss-prevention alerts duplicate the cases above
+    if (al.entity_type === 'loss_incident' || (al.key || '').startsWith('loss:')) return;
     const prefix = (al.key || '').split(':')[0];
     let k = ALERT_STAGE[prefix];
     if (prefix === 'machine_health' || prefix === 'machine_down') {
@@ -132,8 +150,7 @@ export function risksByStage(fac, advisories = [], alerts = []) {
     if (!k && al.stage === 'procurement') k = 'raw';
     if (k) push(k, { id: `al-${al.id}`, source: 'Alert', severity: al.severity, title: al.title, text: al.recommended_action || al.description });
   });
-  const rank = { critical: 0, high: 1, warning: 2, medium: 3, info: 4, low: 5 };
-  Object.values(out).forEach((l) => l.sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9)));
+  Object.values(out).forEach((l) => l.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9)));
   return out;
 }
 

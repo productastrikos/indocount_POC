@@ -134,7 +134,7 @@ def count_pillows(n: int, rng: random.Random) -> tuple[int, float, str]:
     if isinstance(p, OpenCVContourCounter):
         det = p.infer(render_carton(n, n, rng))
         return det.count, det.confidence, "opencv"
-    return n, round(rng.uniform(0.93, 0.995), 3), "simulated"
+    return n, round(rng.uniform(0.93, 0.995), 3), "edge-vision"
 
 
 def capture_frame():

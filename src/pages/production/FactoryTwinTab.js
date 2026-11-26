@@ -4,6 +4,8 @@ import { ErrorBox } from '../../components/common';
 import { useApi } from '../../hooks/useApi';
 import { useApp } from '../../data/DataProvider';
 import { hhmm, num, severityTone } from '../../utils';
+import LossIncidentDrawer from '../../components/loss/LossIncidentDrawer';
+import { usd } from '../../components/loss/lossShared';
 import { createPlantScene, HALL } from './factoryTwin/plantScene';
 import { LINE_STAGES, MACHINE_STAGE, STAGES, STAGE_BY_KEY, STATUS_TONE, SUPPORT, risksByStage, stageStatus } from './factoryTwin/stages';
 import './factoryTwin/factoryTwin.css';
@@ -15,22 +17,27 @@ const LINE_STATUS = { Running: '#22c55e', Changeover: '#f59e0b', Idle: '#64748b'
 const SEV_COLOR = { danger: '#ef4444', warning: '#f59e0b', info: '#38bdf8', neutral: '#94a3b8' };
 
 /* ── 3D viewport (one scene per plant) ───────────────────────────────── */
-function PlantViewport({ data, sceneRef, onSelectStage, onOpenLine, onOpenMachine, onHover, preset }) {
+function PlantViewport({ data, sceneRef, onSelectStage, onOpenLine, onOpenMachine, onOpenLoss, onHover, preset }) {
   const host = useRef(null);
   const cbs = useRef({});
-  cbs.current = { onSelectStage, onOpenLine, onOpenMachine, onHover };
+  cbs.current = { onSelectStage, onOpenLine, onOpenMachine, onOpenLoss, onHover };
   const first = useRef(data);
   useEffect(() => {
     const s = createPlantScene(host.current, first.current, {
       onSelectStage: (k) => cbs.current.onSelectStage?.(k),
       onOpenLine: (id) => cbs.current.onOpenLine?.(id),
       onOpenMachine: (id) => cbs.current.onOpenMachine?.(id),
+      onOpenLoss: (id) => cbs.current.onOpenLoss?.(id),
       onHover: (u, x, y) => cbs.current.onHover?.(u, x, y),
     }, { preset });
     sceneRef.current = s;
     return () => { s.dispose(); sceneRef.current = null; };
   }, [sceneRef, preset]);
-  useEffect(() => { if (sceneRef.current && data) sceneRef.current.update(data); }, [data, sceneRef]);
+  useEffect(() => {
+    if (!sceneRef.current || !data) return;
+    sceneRef.current.update(data);
+    sceneRef.current.setIncidents(data.loss || []);   // loss-prevention beacons, also in compact mode
+  }, [data, sceneRef]);
   return <div ref={host} className="ftw-canvas" />;
 }
 
@@ -82,14 +89,16 @@ function stageKpis(key, fac, flow, summary) {
   }
 }
 
-function StageDetail({ stageKey, fac, st, summary, onClose, onOpenLine, onOpenMachine }) {
+function StageDetail({ stageKey, fac, st, summary, onClose, onOpenLine, onOpenMachine, onOpenLoss }) {
   const s = STAGE_BY_KEY[stageKey];
   const n = STAGES.findIndex((x) => x.key === stageKey) + 1;
   const flow = st.flow || {};
   const kpis = stageKpis(stageKey, fac, flow, summary);
   const lines = LINE_STAGES.includes(stageKey) ? fac.lines : [];
   const machines = fac.lines.flatMap((l) => l.machines.filter((m) => MACHINE_STAGE[m.stage] === stageKey).map((m) => ({ ...m, line: l.name })));
-  const risks = st.risks.slice(0, 4);
+  // every loss-prevention case at this stage + the first four other risks (sorted by severity)
+  const others = st.risks.filter((r) => !r.lossId).slice(0, 4);
+  const risks = st.risks.filter((r) => r.lossId || others.includes(r));
   const actions = [...new Set([...risks.slice(0, 2).map((r) => r.text).filter(Boolean), ...s.actions])].slice(0, 4);
   return (
     <div className="ftw-detail ftw-glass" style={{ '--c': s.color }}>
@@ -146,11 +155,18 @@ function StageDetail({ stageKey, fac, st, summary, onClose, onOpenLine, onOpenMa
           <p className="ftw-sub">Alerts & risks</p>
           {risks.length === 0 && <p className="text-[11.5px] text-sky-200/80">No open alerts or S!AP advisories for this stage.</p>}
           <div className="space-y-1.5">
-            {risks.map((r) => (
+            {risks.map((r) => (r.lossId ? (
+              <button key={r.id} type="button" className="ftw-risk" style={{ '--c': SEV_COLOR[severityTone(r.severity)] }}
+                onClick={() => onOpenLoss(r.lossId)} title="Open the loss-prevention case">
+                <span className="ftw-risk-open">OPEN →</span>
+                <span className="ftw-tag is-loss">{r.source}</span>{r.title}
+                <small>{r.ref} · {r.zone}{r.next ? ` · Next: ${r.next}` : ''}</small>
+              </button>
+            ) : (
               <div key={r.id} className="ftw-risk" style={{ '--c': SEV_COLOR[severityTone(r.severity)] }}>
                 <span className="ftw-tag">{r.source}</span>{r.title}
               </div>
-            ))}
+            )))}
           </div>
         </div>
         <div>
@@ -188,6 +204,7 @@ export default function FactoryTwinTab({ factory, onOpenLine, onOpenMachine, com
   const [hover, setHover] = useState(null);
   const [walk, setWalk] = useState({ playing: false, step: -1, speed: 1 });
   const [progress, setProgress] = useState(0);
+  const [lossId, setLossId] = useState(null);
 
   const data = fac.data && fac.data.factory?.code === plant ? fac.data : null;
   const risks = useMemo(() => (data ? risksByStage(data, [...(pred.data?.advisories || []), ...(tadv.data?.advisories || [])], alerts.data || []) : {}),
@@ -267,6 +284,15 @@ export default function FactoryTwinTab({ factory, onOpenLine, onOpenMachine, com
   const hoverText = (u) => {
     if (!u) return null;
     const s = STAGE_BY_KEY[u.stage];
+    if (u.kind === 'loss') {
+      // case facts only: never a person's name next to a loss marker
+      const cs = (u.ids || [u.id]).map((id) => (data?.loss || []).find((c) => c.id === id)).filter(Boolean);
+      const c = cs[0];
+      if (!c) return null;
+      return cs.length === 1
+        ? { title: `${c.ref} · ${c.kind_label}`, sub: `${c.title} · ${c.zone}${c.value_usd ? ` · ${usd(c.value_usd)}` : ''}`, hint: 'Click to open the loss-prevention case' }
+        : { title: `${cs.length} loss-prevention cases · ${s?.name || ''}`, sub: cs.slice(0, 3).map((x) => `${x.ref} ${x.kind_label}`).join(' · '), hint: 'Click to open the most severe case' };
+    }
     if (u.kind === 'machine') {
       const ln = lines.find((l) => l.id === u.lineId);
       const m = ln?.machines.find((x) => x.id === u.id);
@@ -310,7 +336,7 @@ export default function FactoryTwinTab({ factory, onOpenLine, onOpenMachine, com
           {data ? (
             <PlantViewport key={plant} data={data} sceneRef={sceneRef}
               onSelectStage={(k) => k && select(k)}
-              onOpenLine={onOpenLine} onOpenMachine={onOpenMachine}
+              onOpenLine={onOpenLine} onOpenMachine={onOpenMachine} onOpenLoss={setLossId}
               onHover={(u, x, y) => setHover(u ? { u, x, y } : null)} preset={home} />
           ) : <div className="ftw-loading">Building the {plantName} plant…</div>}
 
@@ -411,7 +437,7 @@ export default function FactoryTwinTab({ factory, onOpenLine, onOpenMachine, com
           {stage && data && status[stage] && (
             <StageDetail stageKey={stage} fac={data} st={status[stage]} summary={summary.data}
               onClose={() => { select(null, false); camera(home); }}
-              onOpenLine={onOpenLine} onOpenMachine={onOpenMachine} />
+              onOpenLine={onOpenLine} onOpenMachine={onOpenMachine} onOpenLoss={setLossId} />
           )}
           {ht && hover && (
             <div className="ftw-tooltip ftw-glass" style={{ left: hover.x, top: hover.y }}>
@@ -464,6 +490,8 @@ export default function FactoryTwinTab({ factory, onOpenLine, onOpenMachine, com
         </div>
         )}
       </div>
+      {/* loss-prevention case (beacon or stage risk click); a fixed overlay, so it is not clipped by the card */}
+      {lossId && <LossIncidentDrawer id={lossId} onClose={() => setLossId(null)} />}
     </Card>
   );
 }

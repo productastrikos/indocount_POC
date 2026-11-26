@@ -15,6 +15,7 @@ import ChangeoversTab from './production/ChangeoversTab';
 import OptimizationTab from './production/OptimizationTab';
 import { STAGE_TONE } from './production/shared';
 import CctvTab from './production/CctvTab';
+import LossCasesCard from '../components/loss/LossCasesCard';
 
 const FactoryTwinTab = lazy(() => import('./production/FactoryTwinTab'));
 
@@ -27,16 +28,17 @@ const TABS = [
   { value: 'machines', label: 'Machine health' },
   { value: 'predictive', label: 'Predictive maintenance' },
   { value: 'workforce', label: 'Workforce' },
+  { value: 'loss', label: 'Material loss' },
   { value: 'changeovers', label: 'Changeovers' },
   { value: 'optimization', label: 'Optimization' },
 ];
 
-function Pipeline({ stages, selected, onSelect }) {
+function Pipeline({ stages, selected, onSelect, day, note }) {
   return (
     <div className="card p-3">
       <div className="flex items-center justify-between mb-2 px-1">
-        <p className="label-caps">Manufacturing process · today</p>
-        <p className="text-[10.5px] text-fg-faint">Click a stage for constrained lines</p>
+        <p className="label-caps">Manufacturing process · {day ? dateShort(day) : 'today'}</p>
+        <p className="text-[10.5px] text-fg-faint">{note || 'Click a stage for constrained lines'}</p>
       </div>
       <div className="flex items-stretch gap-1 overflow-x-auto pb-1">
         {stages.map((s, i) => {
@@ -187,7 +189,8 @@ export default function Production() {
               sub={`A ${pct(s.oee.availability_pct, 0)} × P ${pct(s.oee.performance_pct, 0)} × Q ${pct(s.oee.quality_pct, 0)}`} />
             <Kpi label="Downtime" icon="wrench" value={num(s.downtime_total)} unit="min"
               tone={s.downtime['Mechanical breakdown'] > 0 ? 'danger' : undefined}
-              sub={Object.entries(s.downtime).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([c, v]) => `${c} ${num(v)}`).join(' · ') || 'None'}
+              sub={<>{Object.entries(s.downtime).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([c, v]) => `${c} ${num(v)}`).join(' · ') || 'None'}
+                {s.idle_no_orders_min > 0 && <span className="block text-fg-faint">+ {num(s.idle_no_orders_min)} min idle · no orders (not a machine loss)</span>}</>}
               onClick={() => setTab('monitoring')} />
             <Kpi label="Lines running" icon="settings" value={`${s.lines_running}/${s.lines_total}`}
               tone={s.lines_running < s.lines_total ? 'warning' : 'success'}
@@ -198,7 +201,7 @@ export default function Production() {
               onClick={() => setTab('orders')} active={tab === 'orders'} />
           </div>
 
-          <Pipeline stages={s.pipeline.stages} selected={stage} onSelect={setStage} />
+          <Pipeline stages={s.pipeline.stages} selected={stage} onSelect={setStage} day={date} note={s.pipeline.note} />
 
           {/* items-start: each card keeps its content height; the stage alerts sit under the
               constraint list so the left column is not left empty beside the advisories. */}
@@ -232,6 +235,7 @@ export default function Production() {
         {tab === 'machines' && <MachinesTab factory={factory} onOpen={setMachineId} />}
         {tab === 'predictive' && <PredictiveTab factory={factory} onOpenMachine={setMachineId} />}
         {tab === 'workforce' && <WorkforceTab factory={factory} date={date} shift={shift} highlight={highlightEmp} />}
+        {tab === 'loss' && <LossCasesCard factory={factory} stage="production" title="Material consumption variance" subtitle="Fibre and fabric issued to a line vs what its output should have used (BOM × pillows made, check-weighed fill): unexplained variance becomes a case" />}
         {tab === 'changeovers' && <ChangeoversTab factory={factory} onOpenLine={setLineId} />}
         {tab === 'optimization' && <OptimizationTab factory={factory} presetFactoryId={optFactory} focusRunId={focusRun} />}
       </div>

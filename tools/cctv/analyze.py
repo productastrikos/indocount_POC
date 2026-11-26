@@ -21,6 +21,7 @@ Pipeline
 
     .cvenv/Scripts/python tools/cctv/analyze.py [--no-catalog] [feed-id ...]
     .cvenv/Scripts/python tools/cctv/analyze.py --catalog-only
+    .cvenv/Scripts/python tools/cctv/analyze.py --lp     (badge-only zones from stored tracks)
 
 Line and area cameras track people with the pose model itself (one pass per
 frame, keypoints on every box); packing cameras use YOLO11m + ByteTrack with
@@ -470,6 +471,59 @@ def hand_placements(frames, tracks, pillow_tracks, z, pp):
     return [o for o in out if "hands" in o[2]]
 
 
+def lp_zone_events(d: dict) -> list[dict]:
+    """Badge-only zones (loss prevention). An entry is a person who was outside the zone for
+    at least 0.4 s, then inside for at least 1 s. 'badged' mirrors the browser's identity
+    fusion: station workers and large foreground people have a badge read nearby; anyone else
+    is 'no badge read' — an access check for security to verify, never an accusation."""
+    fps = d["fps"]
+    zones = [z for z in d["zones"] if z["kind"] == "restricted"]
+    if not zones:
+        return []
+    feet = defaultdict(dict)
+    for f, ps in enumerate(d["p"]):
+        for p in ps:
+            feet[p[0]][f] = (p[1] + p[3] / 2, p[2] + p[4])
+    out = []
+    for z in zones:
+        for tid, per in feet.items():
+            pp = d["people"].get(str(tid)) or d["people"].get(tid) or {}
+            badged = bool(pp.get("zone")) or (pp.get("h", 0) >= 150 and pp.get("last", 0) - pp.get("first", 0) >= 3 * fps)
+            out_run, entered, in_run = 0, None, 0
+
+            def emit():
+                out.append({"type": "restricted", "f": entered, "t": round(entered / fps, 2), "zone": z["id"],
+                            "by": tid, "badged": badged, "dwell": round(in_run / fps, 1)})
+            for f in sorted(per):
+                if inside(per[f], z["pts"]):
+                    if entered is None and out_run >= 0.4 * fps:
+                        entered, in_run = f, 0
+                    if entered is not None:
+                        in_run += 1
+                    out_run = 0
+                    continue
+                if entered is not None and in_run >= fps:
+                    emit()
+                entered, in_run = None, 0
+                out_run += 1
+            if entered is not None and in_run >= fps:
+                emit()
+    return sorted(out, key=lambda e: e["f"])
+
+
+def apply_lp(d: dict, fd: dict) -> dict:
+    """(Re)compute badge-only zone events on an analysed feed from its stored tracks."""
+    lp = [z for z in fd.get("zones", []) if z["kind"] == "restricted"]
+    d["zones"] = [z for z in d["zones"] if z["kind"] != "restricted"] + lp
+    d["ev"] = sorted([e for e in d["ev"] if e["type"] != "restricted"] + lp_zone_events(d), key=lambda e: e["f"])
+    names = {z["id"]: z["name"] for z in lp}
+    ents = [e for e in d["ev"] if e["type"] == "restricted"]
+    d["summary"]["badge_checks"] = len(ents)
+    d["summary"]["lp_events"] = [{"t": e["t"], "zone": e["zone"], "zone_name": names.get(e["zone"], e["zone"]),
+                                  "dwell": e["dwell"]} for e in ents if not e["badged"]]
+    return d
+
+
 def analyze(fd):
     t_start = time.time()
     path = OUT_DIR / f"{fd['id']}.mp4"
@@ -662,13 +716,6 @@ def analyze(fd):
                                    "end": round(out_run[-1] / OUT_FPS, 2), "by": tid, "zone": zone,
                                    "seconds": round(len(out_run) / OUT_FPS, 1)})
                 out_run = []
-    for z in zones:
-        if z["kind"] != "restricted":
-            continue
-        for tid, per in tracks.items():
-            hit = next((j for j in sorted(per) if inside(((per[j][0][0] + per[j][0][2]) / 2, per[j][0][3]), z["pts"])), None)
-            if hit is not None:
-                events.append({"type": "restricted", "f": hit, "t": round(hit / OUT_FPS, 2), "by": tid, "zone": z["id"]})
 
     # OCR on the carton print / labels
     ocr = []
@@ -756,6 +803,7 @@ def analyze(fd):
         "summary": summary, "recognition": recognition,
         "processing_s": round(time.time() - t_start, 1),
     }
+    apply_lp(data, fd)
     (OUT_DIR / f"{fd['id']}.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     return data
 
@@ -802,6 +850,15 @@ def write_catalog():
 if __name__ == "__main__":
     args = sys.argv[1:]
     if "--catalog-only" in args:
+        print("catalog feeds:", write_catalog())
+        sys.exit(0)
+    if "--lp" in args:  # badge-only zone events from stored tracks, no re-detection
+        for fd in FEEDS:
+            p = OUT_DIR / f"{fd['id']}.json"
+            if p.exists():
+                d = apply_lp(json.loads(p.read_text(encoding="utf-8")), fd)
+                p.write_text(json.dumps(d, separators=(",", ":")), encoding="utf-8")
+                print(fd["id"], "badge checks", d["summary"]["badge_checks"], "no-badge", len(d["summary"]["lp_events"]))
         print("catalog feeds:", write_catalog())
         sys.exit(0)
     want = {a for a in args if not a.startswith("--")}

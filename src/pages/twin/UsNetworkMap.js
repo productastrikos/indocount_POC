@@ -206,14 +206,14 @@ export default function UsNetworkMap({ data, onOpen }) {
             <span key={k} className="flex items-center gap-1.5"><span className="twin-legend-dot" style={{ background: c }} />{k}</span>
           ))}
           <span className="flex items-center gap-1.5"><span className="twin-legend-dot" style={{ background: '#e0f2fe' }} />Truck in transit</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-sm border" style={{ borderColor: '#7dd3fc' }} />Customer DC (illustrative)</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-sm border" style={{ borderColor: '#7dd3fc' }} />Customer DC</span>
         </div>
       </div>
       <aside className="w-full lg:w-[340px] shrink-0 border-t lg:border-t-0 lg:border-l twin-scroll overflow-y-auto p-4 space-y-3"
         style={{ borderColor: 'var(--twin-line)', background: 'rgba(6, 12, 24, 0.55)' }}>
         <div>
           <p className="label-caps">US manufacturing network</p>
-          <p className="text-[11px] text-fg-faint mt-0.5">Live from the simulation · shift {data.shift}</p>
+          <p className="text-[11px] text-fg-faint mt-0.5">Live · shift {data.shift}</p>
         </div>
         <div className="twin-glass p-3">
           <div className="flex items-baseline justify-between">
@@ -260,7 +260,6 @@ export default function UsNetworkMap({ data, onOpen }) {
             <span className="text-fg-faint tabular-nums">{Math.round(l.progress * 100)}%</span>
           </div>
         ))}
-        <p className="text-[10px] text-fg-faint pt-2">Simulated operations. Customer DC locations are illustrative.</p>
       </aside>
     </div>
   );

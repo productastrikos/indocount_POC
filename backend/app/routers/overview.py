@@ -23,7 +23,8 @@ def overview(factory: str = "ALL", date: str | None = None, shift: int | None = 
     return {
         "sim_time": iso(c.now), "date": c.day.isoformat(), "shift": c.shift, "factory": c.factory,
         "kpis": k,
-        "comparison": metrics.factory_comparison(db, c.day, c.now),
+        # same date and shift scope as the KPIs (plant-wide: production is not tracked per customer)
+        "comparison": metrics.factory_comparison(db, c.day, c.now, c.shift),
         "hourly": metrics.hourly(db, c.fids, c.day, c.shift, c.now),
         "lifecycle": metrics.lifecycle_health(db, c.fids, c.day, c.now, pipe),
         "attention": [alert_dict(a, L) for a in alerts.open_alerts(db, c.fids, 8)],

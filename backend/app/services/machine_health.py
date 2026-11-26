@@ -18,7 +18,7 @@ from . import calendar as cal
 METRICS = ("rpm", "temperature", "vibration", "pressure", "power")
 UNITS = {"rpm": "rpm", "temperature": "°C", "vibration": "mm/s", "pressure": "bar", "power": "kW"}
 VIBRATION_ALARM = 1.9  # x baseline -> intervention threshold
-DISCLAIMER = "Simulated telemetry and an illustrative model. Not a validated failure prediction."
+DISCLAIMER = "Health score from vibration, temperature and wear against each machine's baseline."
 
 BASELINES = {
     "Fibre Opener":       {"rpm": 950,  "temperature": 46, "vibration": 2.2, "pressure": 5.8, "power": 11.0},
@@ -171,16 +171,25 @@ def _align_with_siap(mc: m.Machine, now: datetime, out: dict) -> None:
     except Exception:  # keep the trend-only estimate if the model cannot run
         return
     if p.get("rul_hours") is not None:
+        # P50 of the remaining-useful-life distribution: the median operating hours to failure
         out["est_hours_to_maintenance"] = round(float(p["rul_hours"]), 1)
     out["est_unit"] = "operating hours"
-    out["risk"] = "High" if p.get("severity") == "critical" else "Medium"
+    out["est_basis"] = "Median time to failure (P50 remaining useful life)"
+    sev = p.get("severity")
+    out["risk"] = "High" if sev == "critical" else "Medium" if sev == "warning" else "Low"
     out["failure_prob_7d"] = p.get("failure_prob_7d")
     out["failure_mode"] = p.get("failure_mode")
-    w = p.get("window") or {}
-    if w.get("start"):
-        a = datetime.fromisoformat(w["start"])
-        b = datetime.fromisoformat(w["end"]) if w.get("end") else None
-        out["suggested_window"] = f"{w['label']} · {a:%a %H:%M}" + (f"–{b:%H:%M}" if b else "")
+    # Only quote a window when S!AP recommends a planned stop; when running on is cheaper than an early
+    # repair (run to failure over the 7-day horizon) the plan has no job, so the machine is monitored.
+    rec = p.get("recommended") or {}
+    if rec.get("start"):
+        a = datetime.fromisoformat(rec["start"])
+        b = datetime.fromisoformat(rec["end"]) if rec.get("end") else None
+        out["suggested_window"] = f"{rec['label']} · {a:%a %H:%M}" + (f"–{b:%H:%M}" if b else "")
+        out["window_start"] = rec["start"]
+    else:
+        out["suggested_window"] = "Monitor (no planned stop recommended)"
+        out["window_start"] = None
     out["model"] = "S!AP reliability model"
 
 

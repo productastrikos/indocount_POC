@@ -204,12 +204,12 @@ function ReliabilityCard({ rows }) {
   const since = rows[0]?.observed_since;
   return (
     <Card title="MTBF / MTTR by machine type" padded={false} className="h-full"
-      subtitle={`MTBF: Weibull mean life (illustrative) over observed simulated breakdowns${since ? ` since ${dateShort(since)}` : ''}. MTTR: planned / unplanned.`}>
+      subtitle={`MTBF: Weibull mean life; observed = machine run hours ÷ breakdowns${since ? ` since ${dateShort(since)}` : ''}. MTTR: planned / unplanned; observed = productive hours down per completed repair.`}>
       <DataTable rowKey="type" rows={rows} columns={[
         { key: 'type', header: 'Type', strong: true, render: (r) => <span>{r.type}<span className="block text-[10px] text-fg-faint font-normal whitespace-nowrap">{r.machines} × · β {r.beta} · η {num(r.eta)} h</span></span> },
         { key: 'mtbf', header: 'MTBF', render: (r) => (
           <span className="tabular-nums whitespace-nowrap">{num(r.model_mtbf_h)} h<span className="block text-[10px] text-fg-faint">
-            {r.observed_failures ? `${num(r.observed_mtbf_h)} h (${r.observed_failures} fail.)` : `none in ${num(r.observed_op_hours)} h`}</span></span>
+            {r.observed_failures ? `${num(r.observed_mtbf_h)} h (${r.observed_failures} fail.)` : `none in ${num(r.observed_op_hours)} run h`}</span></span>
         ) },
         { key: 'mttr', header: 'MTTR', render: (r) => (
           <span className="tabular-nums whitespace-nowrap">{num(r.model_mttr_planned_h, 1)} / {num(r.model_mttr_unplanned_h, 1)} h
@@ -275,7 +275,7 @@ function FillWeightCard({ rows, onSelect }) {
 function EnergyCard({ energy, onSelect }) {
   return (
     <Card title="Energy / power anomaly" padded={false}
-      subtitle={`Power above baseline +3% while running · tariff $${energy.tariff_usd_kwh}/kWh (illustrative)`}>
+      subtitle={`Power above baseline +3% while running · tariff $${energy.tariff_usd_kwh}/kWh`}>
       <div className="grid grid-cols-3 gap-2 px-4 pt-3">
         <div className="tile"><p className="label-caps">Excess / day</p><p className="text-base font-bold text-fg tabular-nums">{num(energy.excess_kwh_day, 1)} <span className="text-[10px] font-normal text-fg-faint">kWh</span></p></div>
         <div className="tile"><p className="label-caps">30-day cost</p><p className="text-base font-bold text-fg tabular-nums">{fmtUsd(energy.cost_30d_usd)}</p></div>
@@ -381,7 +381,7 @@ function ModelModal({ model, onClose }) {
       <div className="space-y-4 text-[11.5px]">
         <p className="text-fg-muted leading-relaxed"><code className="text-fg">{model.formula}</code>. Calendar horizons are converted to operating hours with the shift calendar ({model.op_hours_per_day} h per production day; nothing runs 23:00–06:00). The vibration trend to the alarm threshold ({model.vibration_alarm_x_baseline}× baseline) overrides the Weibull median when it is more conservative.</p>
         <div>
-          <p className="label-caps mb-1">Weibull parameters (illustrative)</p>
+          <p className="label-caps mb-1">Weibull parameters</p>
           <DataTable rowKey="type" rows={Object.entries(model.weibull).map(([type, v]) => ({ type, ...v }))} columns={[
             { key: 'type', header: 'Machine type', strong: true },
             { key: 'beta', header: 'Shape β' },
@@ -567,7 +567,7 @@ export function PredictiveDrawer({ id, onClose, onOpenHealth }) {
           <Sub>Impact if it runs to failure</Sub>
           <KV cols={4} items={[
             ['Pillows at risk', num(mc.impact.pillows_at_risk)], ['Line stop', `${num(mc.impact.downtime_hours, 1)} h`],
-            ['Cost (illustrative)', fmtUsd(mc.impact.cost_usd)], ['Line rate', `${num(mc.impact.line_rate_per_h)} /h`],
+            ['Cost', fmtUsd(mc.impact.cost_usd)], ['Line rate', `${num(mc.impact.line_rate_per_h)} /h`],
           ]} />
           {mc.impact.orders.length > 0 && (
             <ul className="mt-2 space-y-1">
@@ -617,17 +617,16 @@ export default function PredictiveTab({ factory, onOpenMachine }) {
       <div className="tile flex items-center gap-3 flex-wrap" style={{ background: 'var(--color-accent-soft)', borderColor: 'var(--color-accent-border)' }}>
         <SiapMark size={15}>Predictive maintenance</SiapMark>
         <span className="text-[11px] text-fg-muted flex-1 min-w-[240px]">{data.disclaimer}</span>
-        <Badge tone="warning" dot>SIMULATED MODEL</Badge>
         <Button size="sm" variant="secondary" icon="info" onClick={() => setShowModel(true)}>Model card</Button>
       </div>
 
       <KpiRow cols={5}>
-        <Kpi label="Machines at risk · 7 d" icon="alert" value={k.at_risk_7d} unit={`of ${k.available} running`}
+        <Kpi label="Machines at risk · 7 d" icon="alert" value={k.at_risk_7d} unit={`of ${k.available} available`}
           tone={k.critical ? 'danger' : k.at_risk_7d ? 'warning' : 'success'}
-          sub={`${k.critical} critical · ${k.warning} warning · ${k.info} watch${k.unavailable ? ` · ${k.unavailable} down` : ''}`} />
+          sub={`${k.critical} critical · ${k.warning} warning · ${k.info} watch${k.unavailable ? ` · ${k.unavailable} down` : ''}${k.available_on_idle_lines ? ` · ${k.available_on_idle_lines} on idle lines (assumed to run)` : ''}`} />
         <Kpi label="Expected failures · 7 d" icon="trendUp" value={num(k.expected_failures_7d, 2)}
           tone={k.expected_failures_7d >= 1 ? 'warning' : undefined}
-          sub={`${num(k.expected_failures_7d_planned, 2)} with the maintenance plan`} />
+          sub={`${num(k.expected_failures_7d_planned, 2)} with the maintenance plan · first 7 forecast days, to ${dayTime(k.forecast_7d_end)}`} />
         <Kpi label="Pillows at risk" icon="factory" value={num(k.pillows_at_risk)} tone={k.pillows_at_risk ? 'danger' : 'success'}
           sub={`If at-risk machines fail · ≈${num(k.expected_pillows_lost_7d)} expected loss over 7 d (all machines)`} />
         <Kpi label="Loss avoidable" icon="dollar" value={fmtUsd(k.loss_avoidable_usd)} tone={k.loss_avoidable_usd ? 'success' : undefined}

@@ -192,6 +192,4 @@ export function KV({ items, cols = 2 }) {
   );
 }
 
-export function SimTag() {
-  return <Badge tone="warning" dot>SIMULATED</Badge>;
-}
+

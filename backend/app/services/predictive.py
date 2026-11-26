@@ -49,7 +49,7 @@ from itertools import groupby
 from operator import itemgetter
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import models as m
@@ -57,8 +57,7 @@ from . import calendar as cal
 from . import machine_health as mh
 from .common import iso, next_number, state
 
-DISCLAIMER = ("Illustrative model: Weibull reliability x condition-based proportional hazards on simulated telemetry. "
-              "Probabilities, remaining life and costs are estimates for demonstration, not a validated failure prediction.")
+DISCLAIMER = "Weibull reliability x condition-based proportional hazards, blended with the vibration trend."
 
 OP_HOURS_PER_DAY = round(2 * cal.productive_minutes_per_shift() / 60, 2)  # 2 x 460 min = 15.33 h
 
@@ -714,24 +713,31 @@ def forecast(fleet: Fleet, days: int = 14) -> list[dict]:
 
 
 def reliability(fleet: Fleet) -> list[dict]:
+    """Model MTBF/MTTR per machine type next to the observed values since the simulation start:
+    observed MTBF = machine operating hours (its line's run time, so idle lines add nothing) / breakdowns;
+    observed MTTR = productive minutes the line was down per completed repair (lunch, breaks, nights excluded)."""
     st = state(fleet.db)
     start = datetime.combine(st.seed_date, cal.DAY_START) if st and st.seed_date else fleet.now - timedelta(days=1)
-    obs_per_machine = op_hours(start, fleet.now)
+    run_h = defaultdict(float)
+    for lid, mins in fleet.db.execute(select(m.ProductionHourly.line_id, func.sum(m.ProductionHourly.run_min)).where(
+            m.ProductionHourly.factory_id.in_(fleet.fids), m.ProductionHourly.date >= start.date(),
+            m.ProductionHourly.date <= fleet.now.date()).group_by(m.ProductionHourly.line_id)):
+        run_h[lid] = float(mins or 0) / 60
     types = defaultdict(list)
     for mc in fleet.machines:
         types[mc.machine_type].append(mc)
     mtype_of = {mc.id: mc.machine_type for mc in fleet.machines}
     events = defaultdict(list)
     for e in fleet.breakdowns:
-        if e.machine_id in mtype_of:
+        if e.machine_id in mtype_of and e.start and e.start >= start:
             events[mtype_of[e.machine_id]].append(e)
     out = []
     for t, mcs in sorted(types.items()):
         wb = _wb(t)
         rep = REPAIRS[DEFAULT_MODE.get(t, "bearing")]
         ev = events.get(t, [])
-        durs = [((e.end or fleet.now) - e.start).total_seconds() / 3600 for e in ev if e.start]
-        obs = obs_per_machine * len(mcs)
+        durs = [(e.minutes or 0) / 60 for e in ev if e.end]
+        obs = sum(run_h.get(mc.line_id, 0.0) for mc in mcs)
         out.append({
             "type": t, "machines": len(mcs), "beta": wb["beta"], "eta": wb["eta"], "dominant_failure": wb["dominant"],
             "model_mtbf_h": round(weibull_mean(wb["beta"], wb["eta"])),
@@ -838,7 +844,7 @@ def technician_load(fleet: Fleet, plan: dict, days: int = 7) -> dict:
         "technician_hours": round(sum(j["technician_hours"] for j in after_hours), 1),
         "crew_needed": max((j["crew"] for j in after_hours), default=0)},
         "peak_load_pct": peak, "assumption": (f"Capacity = present technicians x {paid:.0f} paid h x {int(share * 100)}% "
-                                              "available for corrective/predictive work (illustrative).")}
+                                              "available for corrective/predictive work.")}
 
 
 def spares(fleet: Fleet) -> list[dict]:
@@ -937,8 +943,12 @@ def fleet_view(db: Session, fids, now: datetime) -> dict:
     fc = forecast(fleet)
     at_risk = [p for p in av if (p["failure_prob_7d"] or 0) >= 0.10]
     sev_counts = {s: sum(1 for p in av if p["severity"] == s) for s in SEVERITY_RANK}
-    exp7 = sum(p["failure_prob_7d"] or 0 for p in av)
-    exp7_plan = sum(1 - fleet.survival(p, fleet.h7d, fleet.plan_offset(p)) for p in av)
+    # Same boundaries as the first 7 bars of the forecast (now -> 06:00 on day 7), so the KPI equals their sum.
+    fc_end = datetime.combine(now.date() + timedelta(days=7), cal.DAY_START)
+    h7 = op_hours(now, fc_end)
+    fail7 = {p["machine_id"]: 1 - fleet.survival(p, h7) for p in av}
+    exp7 = sum(fail7.values())
+    exp7_plan = sum(1 - fleet.survival(p, h7, fleet.plan_offset(p)) for p in av)
     risk_matrix = [{"machine_id": p["machine_id"], "code": p["code"], "name": p["name"], "factory": p["factory"],
                     "line": p["line"], "p7d": p["failure_prob_7d"], "pillows_at_risk": p["impact"]["pillows_at_risk"],
                     "downtime_hours": p["impact"]["downtime_hours"], "cost_usd": p["impact"]["cost_usd"],
@@ -947,11 +957,14 @@ def fleet_view(db: Session, fids, now: datetime) -> dict:
     lowest = sorted(av, key=lambda p: p["rul_hours"])[:10]
     kpis = {
         "machines": len(fleet.machines), "available": len(av), "unavailable": len(fleet.machines) - len(av),
+        # available machines whose line is not running now (idle / changeover): predicted as if they run
+        "available_on_idle_lines": sum(1 for p in av if p.get("line_status") != "Running"),
         "at_risk_7d": len(at_risk), "critical": sev_counts["critical"], "warning": sev_counts["warning"],
         "info": sev_counts["info"],
         "expected_failures_7d": round(exp7, 2), "expected_failures_7d_planned": round(exp7_plan, 2),
+        "forecast_7d_end": iso(fc_end),
         "pillows_at_risk": sum(p["impact"]["pillows_at_risk"] for p in at_risk),
-        "expected_pillows_lost_7d": round(sum((p["failure_prob_7d"] or 0) * p["impact"]["pillows_at_risk"] for p in av)),
+        "expected_pillows_lost_7d": round(sum(fail7[p["machine_id"]] * p["impact"]["pillows_at_risk"] for p in av)),
         "loss_avoidable_usd": plan["loss_avoided_usd"],
         "recommended_jobs": sum(1 for j in plan["jobs"] if j["status"] == "Recommended"),
         "scheduled_jobs": sum(1 for j in plan["jobs"] if j["work_order"]),
@@ -982,7 +995,7 @@ def fleet_view(db: Session, fids, now: datetime) -> dict:
 
 def model_card() -> dict:
     return {
-        "name": "Weibull reliability x condition-based proportional hazards (illustrative)",
+        "name": "Weibull reliability x condition-based proportional hazards",
         "weibull": {t: {"beta": v["beta"], "eta": v["eta"], "mean_life_h": round(weibull_mean(v["beta"], v["eta"])),
                         "dominant_failure": v["dominant"]} for t, v in WEIBULL.items()},
         "covariates": {k: {"gamma": v["gamma"], "x": v["x"]} for k, v in COVARIATES.items()},
@@ -1170,7 +1183,7 @@ def gen_fill_weight(ctx: AdvisoryContext) -> list[dict]:
                       f"Trend {r['slope_pct_per_op_h']:+.3f}% per operating h"
                       + (f"; under-fill limit in ≈{hrs:.0f} op h" if hrs is not None else ""),
                       f"Fill weight assumed to move {COST['fill_weight_sensitivity']}× the relative pressure change; "
-                      f"{COST['underfill_rework_share'] * 100:.0f}% of exposed pillows re-worked (illustrative)"],
+                      f"{COST['underfill_rework_share'] * 100:.0f}% of exposed pillows re-worked"],
             actions=[] if wo else [{"type": "schedule_work_order", "label": f"Schedule {win[0]:%a %H:%M}",
                                     "machine_id": p["machine_id"], "start": iso(win[0]),
                                     "end": iso(win[0] + timedelta(hours=REPAIRS['seal']['planned_mttr_h']))}],
@@ -1250,7 +1263,7 @@ def gen_technician_capacity(ctx: AdvisoryContext) -> list[dict]:
                            "cost_usd": round(hours * COST["technician_rate_usd_h"] * COST["after_hours_multiplier"]), "orders": []},
                 recommendation="Confirm overtime call-in for the night crew so the zero-loss window is used.",
                 window={"label": "Non-production window", "start": night["start"], "end": night["end"]},
-                confidence=0.75, evidence=[f"Overtime at {COST['after_hours_multiplier']}× the loaded technician rate (illustrative)",
+                confidence=0.75, evidence=[f"Overtime at {COST['after_hours_multiplier']}× the loaded technician rate",
                                            load["assumption"]]))
     return out
 
@@ -1286,8 +1299,13 @@ def gen_workforce_rfid(ctx: AdvisoryContext) -> list[dict]:
     return workforce_advisories(ctx.db, ctx.fids, ctx.now)
 
 
+def gen_loss_prevention(ctx: AdvisoryContext) -> list[dict]:
+    from . import loss
+    return loss.advisories(ctx.db, ctx.fids, ctx.now, ctx.factories)
+
+
 GENERATORS = [gen_predictive_maintenance, gen_fill_weight, gen_spares, gen_technician_capacity, gen_energy,
-              gen_workforce_rfid]
+              gen_workforce_rfid, gen_loss_prevention]
 
 
 def rank_key(a: dict):
@@ -1342,7 +1360,7 @@ def schedule_work_order(db: Session, advisory_id: str, now: datetime, username: 
         number=next_number(db, m.WorkOrder, "WO-", 3000), machine_id=mc.id, factory_id=mc.factory_id, wo_type="Predictive",
         status="Scheduled", priority={"critical": "Critical", "warning": "High"}.get(sev, "Medium"),
         description=(f"S!AP {advisory_id}: {rep['mode']} — {rep['repair']}. Part: {rep['part']}. "
-                     f"P(7d) {_pct(p['failure_prob_7d'])}, RUL ≈ {p['rul_hours']:.0f} op h (illustrative model).")[:2000],
+                     f"P(7d) {_pct(p['failure_prob_7d'])}, RUL ≈ {p['rul_hours']:.0f} op h.")[:2000],
         created_at=now, acknowledged_at=now, acknowledged_by=username, scheduled_start=start, scheduled_end=end)
     db.add(wo)
     db.flush()

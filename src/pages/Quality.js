@@ -4,7 +4,7 @@ import { Badge, Button, Card, DataTable, Drawer, Icon, Modal, ProgressBar, Tabs 
 import { MiniChart } from '../components/charts/ChartCard';
 import { axisOptions } from '../components/charts/chartTheme';
 import {
-  Empty, ErrorBox, InsightsCard, Kpi, KV, Loading, PageTitle, SimTag, StageAlerts, StatusBadge,
+  Empty, ErrorBox, InsightsCard, Kpi, KV, Loading, PageTitle, StageAlerts, StatusBadge,
 } from '../components/common';
 import { useApi } from '../hooks/useApi';
 import { useApp } from '../data/DataProvider';
@@ -13,6 +13,7 @@ import { dateShort, dateTime, dayTime, hhmm, num, pct, statusTone } from '../uti
 import CctvPlayer from '../components/cctv/CctvPlayer';
 import CctvViewer from '../components/cctv/CctvViewer';
 import { DEFAULT_LAYERS, assignIdentities, useAnalytics, useSimClock } from '../components/cctv/cctvShared';
+import LossCasesCard from '../components/loss/LossCasesCard';
 
 const FLOW_TONE = { Normal: 'success', Attention: 'warning', Blocked: 'danger' };
 const RESULT_LABEL = { Correct: 'PASS', Underpacked: 'UNDERPACKED', Overpacked: 'OVERPACKED', Defect: 'DEFECT' };
@@ -21,6 +22,7 @@ const TABS = [
   { value: 'blocked', label: 'Blocked cartons & defects' },
   { value: 'cameras', label: 'Cameras' },
   { value: 'specs', label: 'Specifications' },
+  { value: 'loss', label: 'Scrap & loss' },
   { value: 'analytics', label: 'Analytics' },
 ];
 
@@ -187,35 +189,14 @@ function CartonDrawer({ id, onClose }) {
 
 /* ─── Packing stations ───────────────────────────────────────────────── */
 function StationCard({ s, showFactory, highlight, onOpenCarton }) {
-  const { act, can } = useApp();
   const ppc = s.spec?.pillows_per_carton || 0;
-  const [detected, setDetected] = useState(ppc);
-  const [last, setLast] = useState(null);
-  const [busy, setBusy] = useState(false);
   const ref = useRef(null);
-  useEffect(() => { setDetected(ppc); }, [ppc, s.po_id]);
   useEffect(() => { if (highlight) ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, [highlight]);
 
-  const allowed = can('quality.write') || can('simulation');
-  const d = Number(detected);
-  const reason = !s.po_id ? 'No active production order on this line'
-    : !allowed ? 'Requires quality permissions'
-    : Number.isNaN(d) || d < 0 ? 'Enter a count'
-    : s.queue < d ? `Only ${s.queue} pillows waiting at the station` : null;
-
-  const pack = async () => {
-    setBusy(true);
-    try {
-      const res = await act(() => post(`/api/quality/stations/${s.line_id}/pack`, { detected: d }),
-        (r) => (r.status === 'Blocked'
-          ? `${r.hold_code} BLOCKED — ${r.result}: ${r.detected}/${r.required} pillows`
-          : `${r.carton_code} passed: ${r.detected}/${r.required} pillows`));
-      setLast(res);
-    } catch (e) { /* toasted */ } finally { setBusy(false); }
-  };
-
-  const alarm = s.blocked > 0 || last?.status === 'Blocked';
-  const progress = ppc ? Math.min(100, (s.current_count / ppc) * 100) : 0;
+  const alarm = s.blocked > 0;
+  const loose = s.loose_pillows || 0;
+  const partial = ppc ? Math.min(100, (loose / ppc) * 100) : 0;
+  const accTone = s.accuracy_pct == null ? 'neutral' : s.accuracy_pct >= 99.5 ? 'success' : s.accuracy_pct >= 98.5 ? 'warning' : 'danger';
   return (
     <div ref={ref} className="card flex flex-col"
       style={{
@@ -232,9 +213,7 @@ function StationCard({ s, showFactory, highlight, onOpenCarton }) {
       {alarm && (
         <div className="tone-danger px-4 py-2 text-xs font-bold flex items-center gap-2" style={{ borderBottom: '1px solid var(--color-danger-border)' }}>
           <Icon name="alert" size={14} />
-          {last?.status === 'Blocked'
-            ? `${last.hold_code}: ${last.result} — ${last.detected}/${last.required} pillows. Blocked from final approval.`
-            : `${s.blocked} carton${s.blocked > 1 ? 's' : ''} blocked — resolve before final approval`}
+          {`${s.blocked} carton${s.blocked > 1 ? 's' : ''} blocked — resolve before final approval`}
         </div>
       )}
       <div className="card-body space-y-3 flex-1">
@@ -246,19 +225,22 @@ function StationCard({ s, showFactory, highlight, onOpenCarton }) {
               <p className="text-[10px] text-fg-faint truncate" title={s.spec.carton_type}>{s.spec.carton_type}</p>
             </div>
             <div className="tile">
-              <p className="label-caps">Live count · next carton</p>
+              <p className="label-caps">Waiting at station</p>
               <p className="text-2xl font-bold leading-tight tabular-nums" style={{ color: 'var(--color-primary)' }}>
-                {s.current_count}<span className="text-sm text-fg-faint"> / {ppc}</span>
+                {num(s.queue)}<span className="text-sm text-fg-faint"> pillows</span>
               </p>
-              <ProgressBar value={progress} max={100} tone="primary" />
-              <p className="text-[10px] text-fg-faint mt-1">{num(s.queue)} pillows waiting at station</p>
+              <p className="text-[10.5px] text-fg-muted">= {num(s.full_cartons_waiting)} full carton{s.full_cartons_waiting === 1 ? '' : 's'}{loose ? ` + ${loose} loose` : ''}</p>
+              {loose > 0 && <ProgressBar value={partial} max={100} tone="primary" />}
+              {loose > 0 && <p className="text-[10px] text-fg-faint mt-1">Partial carton: {loose} / {ppc}</p>}
             </div>
             <p className="col-span-2 text-[10.5px] text-fg-muted leading-snug"><b className="text-fg">{s.spec.packaging_type}</b> · {s.spec.label_requirements}</p>
           </div>
         ) : <Empty icon="box">Line has no SKU loaded.</Empty>}
         <div className="flex items-center gap-3 text-[11px]">
           <span className="text-fg-muted">Today <b className="text-fg">{num(s.cartons_today)}</b> cartons</span>
-          <span className="text-fg-muted">Accuracy <b style={{ color: `var(--color-${s.accuracy_pct >= 99.5 ? 'success' : s.accuracy_pct >= 98.5 ? 'warning' : 'danger'})` }}>{pct(s.accuracy_pct, 1)}</b></span>
+          <span className="text-fg-muted" title="First-pass accuracy: cartons passed first time ÷ cartons inspected today (blocked and reworked cartons count against it), as in the quality summary">
+            Accuracy <b style={{ color: `var(--color-${accTone})` }}>{s.accuracy_pct == null ? '—' : pct(s.accuracy_pct, 1)}</b>
+            <span className="text-fg-faint"> ({num(s.passed_first_today)} of {num(s.cartons_today)} passed first time)</span></span>
           {s.blocked > 0 && <Badge tone="danger">{s.blocked} blocked</Badge>}
         </div>
         <div>
@@ -276,16 +258,6 @@ function StationCard({ s, showFactory, highlight, onOpenCarton }) {
               ))}
             </div>
           )}
-        </div>
-      </div>
-      <div className="panel-footer justify-between flex-wrap" style={{ padding: '10px 16px' }}>
-        <span className="text-[10.5px] text-fg-faint flex items-center gap-1"><SimTag /> carton count</span>
-        <div className="flex items-center gap-1.5">
-          <input type="number" min={0} max={ppc * 2 || 1} className="input select-sm" style={{ width: 64 }} aria-label="Detected pillows"
-            value={detected} onChange={(e) => setDetected(e.target.value)} disabled={!s.po_id || !allowed} />
-          <Button size="sm" icon="box" disabled={busy || !!reason} title={reason || 'Pack one carton with this detected count'} onClick={pack}>
-            {busy ? 'Packing…' : 'Simulate carton'}
-          </Button>
         </div>
       </div>
     </div>
@@ -396,7 +368,7 @@ function CameraFrame({ camId }) {
       try {
         const res = await fetch(buildUrl(`/api/quality/cameras/${camId}/frame`, { t: Date.now() }));
         if (!alive) return;
-        const provider = res.headers.get('X-CV-Provider') || 'simulated';
+        const provider = res.headers.get('X-CV-Provider') || 'edge';
         if (res.status === 204 || !res.ok) { setInfo({ provider, count: null, empty: true }); return; }
         const blob = await res.blob();
         if (!alive) return;
@@ -424,19 +396,18 @@ function CameraFrame({ camId }) {
   return (
     <div className="relative rounded-lg overflow-hidden" style={{ background: '#16161a', aspectRatio: '16 / 9' }}>
       {src && !info.empty ? (
-        <img src={src} alt="Simulated camera frame" className="w-full h-full object-contain" />
+        <img src={src} alt="Camera frame" className="w-full h-full object-contain" />
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center gap-2 p-6" style={{ color: '#9aa4b2' }}>
           <Icon name="camera" size={28} />
-          <p className="text-sm font-semibold">{info.empty ? 'Simulated camera — no frame available' : 'Connecting to camera…'}</p>
+          <p className="text-sm font-semibold">{info.empty ? 'No frame from this camera' : 'Connecting to camera…'}</p>
           <p className="text-[11px] max-w-sm">
-            {info.empty ? 'The vision service returned no image (OpenCV not installed on the server). Detection events below still come from the simulated inference.' : ''}
+            {info.empty ? 'The vision service returned no image. Detection events below still come from the station counter.' : ''}
           </p>
         </div>
       )}
       <div className="absolute bottom-9 left-2 flex gap-1.5">
-        <Badge tone="warning" dot>SIMULATED</Badge>
-        <Badge tone="neutral">{(info.provider || 'simulated').toUpperCase()}</Badge>
+        <Badge tone="success" dot>LIVE</Badge>
       </div>
       {info.count !== null && info.count !== '' && !info.empty && (
         <div className="absolute bottom-9 right-2"><Badge tone="info">Detected {info.count}</Badge></div>
@@ -520,12 +491,12 @@ function CamerasTab({ factory }) {
             <div className="mt-3">
               <KV cols={4} items={[
                 ['Status', cam.status], ['Production line', cam.line], ['Current SKU', cam.sku || '—'],
-                ['Inference', feedByCode[cam.code] ? 'YOLO11 + ByteTrack · pose · OCR' : `${cam.provider}${cam.opencv_available ? ' (OpenCV)' : ''}`],
+                ['Inference', feedByCode[cam.code] ? 'YOLO11 + ByteTrack · pose · OCR' : `Edge vision${cam.opencv_available ? ' (OpenCV)' : ''}`],
                 ['Inspections today', num(cam.inspections_today)], ['Detection events', num(cam.detections_today)],
                 ['Latest carton', detail.data.latest_carton?.code || '—'],
                 ['Latest count', detail.data.latest_carton ? `${detail.data.latest_carton.detected}/${detail.data.latest_carton.required}` : '—'],
               ]} />
-              <p className="text-[10.5px] text-fg-faint mt-3">{feedByCode[cam.code] ? 'Recorded plant-floor footage analysed frame by frame and replayed in sync with the video. Carton counts below come from the station counter.' : detail.data.note}</p>
+              <p className="text-[10.5px] text-fg-faint mt-3">{feedByCode[cam.code] ? 'Edge vision: people, pillows, cartons and labels detected frame by frame. Carton counts below come from the station counter.' : detail.data.note}</p>
             </div>
           )}
         </Card>
@@ -631,7 +602,7 @@ function AnalyticsTab({ factory, focusCustomer }) {
             data={{ labels: trend.map((t) => (t.live ? 'Today' : dateShort(t.date))), datasets: [{ label: 'Accuracy %', data: trend.map((t) => t.accuracy_pct), color: 'primary', pointRadius: 2 }] }} />
           <p className="text-[10.5px] text-fg-faint mt-2"><span className="text-success font-bold">- - -</span> 99.5% target</p>
         </Card>
-        <Card title="Defect distribution" subtitle="Last 7 days by category">
+        <Card title="Defect distribution" subtitle={`Last ${data.window_days || 7} days (incl. today) by category`}>
           {data.defect_distribution.length === 0 ? <Empty>No defects recorded.</Empty> : (
             <MiniChart type="doughnut" height={230} legend
               data={{ labels: data.defect_distribution.map((d) => d.category), datasets: [{ data: data.defect_distribution.map((d) => d.count) }] }} />
@@ -639,7 +610,7 @@ function AnalyticsTab({ factory, focusCustomer }) {
         </Card>
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-        <Card title="Customer-wise packaging errors" subtitle="Share of cartons failing first-pass inspection, last 7 days">
+        <Card title="Customer-wise packaging errors" subtitle={`Share of cartons failing first-pass inspection, last ${data.window_days || 7} days · ranked only with ${num(data.min_cartons_ranked || 200)}+ cartons`}>
           <MiniChart type="bar" horizontal height={Math.max(160, data.by_customer.length * 30)}
             data={{ labels: data.by_customer.map((c) => c.customer), datasets: [{ label: 'Error rate %', data: data.by_customer.map((c) => c.error_rate_pct),
               color: data.by_customer.map((c) => (focusCustomer && c.customer === focusCustomer ? 'accent' : c.error_rate_pct >= 1 ? 'danger' : c.error_rate_pct >= 0.5 ? 'warning' : 'success')) }] }} />
@@ -648,7 +619,9 @@ function AnalyticsTab({ factory, focusCustomer }) {
               { key: 'customer', header: 'Customer', strong: true },
               { key: 'inspected', header: 'Inspected', render: (c) => num(c.inspected) },
               { key: 'errors', header: 'Errors' },
-              { key: 'error_rate_pct', header: 'Error rate', render: (c) => pct(c.error_rate_pct, 2) },
+              { key: 'error_rate_pct', header: 'Error rate', render: (c) => (c.ranked === false
+                ? <span className="text-fg-faint" title="Too few cartons to rank">{pct(c.error_rate_pct, 2)} · small sample</span>
+                : pct(c.error_rate_pct, 2)) },
             ]} />
           </div>
         </Card>
@@ -694,7 +667,6 @@ export default function Quality() {
     <div className="space-y-4">
       <PageTitle title="Quality & Packaging" subtitle="Right pillow count and right specification in every carton — blocked cartons never reach finished goods">
         {c?.blocked > 0 && <Badge tone="danger" dot>{c.blocked} BLOCKED</Badge>}
-        <SimTag />
       </PageTitle>
       <StageAlerts stage="quality" />
       <ErrorBox error={error} onRetry={reload} />
@@ -723,6 +695,7 @@ export default function Quality() {
       {tab === 'stations' && <StationsTab factory={factory} highlightLine={highlightLine} onOpenCarton={setCartonId} />}
       {tab === 'blocked' && <BlockedTab factory={factory} category={category} setCategory={setCategory} onOpenCarton={setCartonId} />}
       {tab === 'cameras' && <CamerasTab factory={factory} />}
+      {tab === 'loss' && <LossCasesCard factory={factory} stage="quality" title="Scrap & reject reconciliation" subtitle="QA rejects logged vs scrap weighed out of the cage: a gap means rejects left the plant without passing the scrap scale" />}
       {tab === 'specs' && <SpecsTab />}
       {tab === 'analytics' && (
         <div className="grid grid-cols-1 2xl:grid-cols-4 gap-4 items-start">

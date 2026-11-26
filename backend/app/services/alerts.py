@@ -112,13 +112,14 @@ def generate(db: Session, now: datetime) -> list[dict]:
     # 4. Raw material coverage & delayed inbound
     mats = inventory.material_rows(db, list(factories), now)
     for r in mats:
-        if r["status"] in ("Critical", "Low"):
-            days = r["days_cover"]
+        if r["status"] in ("Critical", "Low") and r.get("tracked", True):
+            days = r["days_cover"] if r["days_cover"] is not None else 0
             when = "today" if days < 0.6 else "tomorrow" if days < 1.6 else f"in {days:.1f} days"
             add(f"material:{r['factory_id']}:{r['material_id']}", "critical" if r["status"] == "Critical" else "warning",
                 r["factory_id"], "procurement", f"Raw material SKU {r['code']} may run out {when}",
-                f"{r['name']}: {r['available']:,.0f} {r['uom']} available, consuming {r['consumption_per_day']:,.0f}/day "
-                f"({days} days cover vs {r['reorder_days']} threshold). Incoming {r['incoming']:,.0f} {r['uom']}.",
+                f"{r['name']}: {r['on_hand']:,.0f} {r['uom']} on hand, {r['reserved']:,.0f} committed to open production "
+                f"orders, using {r['consumption_per_day']:,.0f}/day. {r['status_reason']}. "
+                f"On order and usable in time: {r['incoming_in_time']:,.0f} {r['uom']}.",
                 "Expedite the open purchase order or raise an emergency PO; re-sequence orders using this material.",
                 "material", r["material_id"], 60 if r["status"] == "Critical" else 25)
     for s in db.scalars(select(m.InboundShipment).where(m.InboundShipment.status.in_(("Scheduled", "In Transit")))):
@@ -152,8 +153,9 @@ def generate(db: Session, now: datetime) -> list[dict]:
         if r["at_risk"] and t:
             add(f"ship_risk:{o.id}", "critical" if r["level"] == "High" else "warning", o.factory_id, "dispatch",
                 f"Shipment {o.number} is unlikely to meet its truck appointment",
-                f"{o.customer.name} · {t.ref} due {t.scheduled_arrival:%a %H:%M}; projected ready "
-                f"{info[o.id]['ready_eta']:%a %H:%M}. " + "; ".join(r["reasons"]),
+                f"{o.customer.name} · {t.ref} due {t.scheduled_arrival:%a %b %d %H:%M}; projected ready "
+                + (f"{info[o.id]['ready_eta']:%a %b %d %H:%M}. " if info[o.id]["ready_eta"] else "unknown. ")
+                + "; ".join(r["reasons"]),
                 "Prioritize the order, expedite picking or reschedule the truck (see Dispatch).",
                 "order", o.id, 70 + min(30, -r["slack_min"] / 10 if r["slack_min"] else 0))
             for po in info[o.id]["pos"]:
@@ -165,7 +167,7 @@ def generate(db: Session, now: datetime) -> list[dict]:
                 add(f"detention:{t.id}", "critical", o.factory_id, "dispatch",
                     f"Truck {t.ref} waiting {wait:.0f} min — detention charge likely",
                     f"{o.number} for {o.customer.name}: {t.delay_reason or 'order not ready'}. "
-                    f"Illustrative charge ${rules['detention_charge']:,.0f}.",
+                    f"Charge ${rules['detention_charge']:,.0f} per truck.",
                     "Expedite picking/loading for this order or release the truck and rebook.", "truck", t.id, 80)
     for (fid, mat_code), olist in material_chain.items():
         add(f"chain_material:{fid}:{mat_code}", "critical", fid, "procurement",
@@ -195,6 +197,10 @@ def generate(db: Session, now: datetime) -> list[dict]:
             add(f"capacity:{fid}", "warning", fid, "warehouse", f"Warehouse at {fg['utilization_pct']}% capacity",
                 "Storage locations are nearly full.", "Prioritize outbound picking and consolidate partial pallets.",
                 "warehouse", fid, 10)
+
+    # Loss prevention: active pilferage / unexplained-loss cases
+    from . import loss
+    out.extend(loss.alert_rows(db))
     return out
 
 

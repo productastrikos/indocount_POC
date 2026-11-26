@@ -11,55 +11,74 @@ import { SiapAdvisoriesCard } from '../components/common/SiapAdvisories';
 
 const STAGE_TONE = { Normal: 'success', Constrained: 'warning', Bottleneck: 'danger', Down: 'danger' };
 
+/** Change between the current (or selected) shift and the shift before it; null when either is missing. */
+const shiftDelta = (cur, prev) => (cur == null || prev == null ? null : cur - prev);
+
 function KpiGrid({ k, onOpen, navigate }) {
   const p = k.production;
-  const prodTone = p.on_track ? 'success' : p.achievement_pct >= 0 && p.actual >= p.planned_to_date * 0.85 ? 'warning' : 'danger';
+  const notStarted = !p.started;
+  const prodTone = notStarted ? undefined : p.on_track ? 'success' : p.actual >= p.planned_to_date * 0.85 ? 'warning' : 'danger';
   const wf = k.workforce;
   const inv = k.inventory;
+  const e = k.efficiency;
+  const lc = k.labour_cost;
+  // With a customer filter only packaging and shipment are customer-scoped; production is not tracked per customer.
+  const pw = (label) => (k.customer_scoped?.length ? `${label} (plant-wide)` : label);
+  const effDelta = e.delta;
+  const opwDelta = shiftDelta(wf.current_output_per_worker_hour, wf.previous_output_per_worker);
+  const cppDelta = shiftDelta(lc.current_per_pillow, lc.previous_per_pillow);
+  const shiftCmp = e.shift_scope || !e.current_label ? '' : `${e.current_label} vs ${e.previous_label}`;
+  const ship = k.shipment;
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-      <Kpi label="Production output" icon="factory" value={num(p.actual)} unit="pillows" tone={prodTone}
+      <Kpi label={pw('Production output')} icon="factory" value={num(p.actual)} unit="pillows" tone={prodTone}
         sub={<>Target {num(p.target)} · <b>{pct(p.achievement_pct)}</b> achieved</>}
-        footer={<div className="mt-1"><ProgressBar value={p.actual} max={p.target} tone={prodTone} />
-          <p className="text-[10px] mt-1" style={{ color: `var(--color-${prodTone})` }}>{p.status} · plan to date {num(p.planned_to_date)}</p></div>}
+        footer={<div className="mt-1"><ProgressBar value={p.actual} max={p.target || 1} tone={prodTone} />
+          <p className="text-[10px] mt-1" style={{ color: `var(--color-${prodTone || 'text-muted'})` }}>{p.status} · plan to date {num(p.planned_to_date)}</p></div>}
         onClick={() => onOpen('production')} />
-      <Kpi label="Production efficiency" icon="gauge" value={pct(k.efficiency.pct)} tone={effTone(k.efficiency.pct)}
-        delta={{ value: k.efficiency.delta, good: k.efficiency.delta >= 0, unit: ' pts' }}
-        sub={`Actual ÷ expected output for available time · vs ${k.efficiency.previous_label} ${pct(k.efficiency.previous_shift_pct)}`}
+      <Kpi label={pw('Production efficiency')} icon="gauge" value={notStarted ? 'Not started' : pct(e.pct)} tone={effTone(e.pct)}
+        delta={effDelta != null ? { value: effDelta, good: effDelta >= 0, unit: ' pts' } : null}
+        sub={notStarted ? 'The selected shift has not started yet'
+          : `Actual ÷ plan for the productive time · ${shiftCmp ? `${shiftCmp}: ${pct(e.current_shift_pct)} vs ${pct(e.previous_shift_pct)}` : `vs ${e.previous_label} ${pct(e.previous_shift_pct)}`}`}
         onClick={() => onOpen('efficiency')} />
-      <Kpi label="OEE" icon="analytics" value={pct(k.oee.oee_pct)} tone={effTone(k.oee.oee_pct, 85, 70)}
+      <Kpi label={pw('OEE')} icon="analytics" value={pct(k.oee.oee_pct)} tone={effTone(k.oee.oee_pct, 85, 70)}
         sub={`A ${pct(k.oee.availability_pct, 0)} × P ${pct(k.oee.performance_pct, 0)} × Q ${pct(k.oee.quality_pct, 0)}`}
         onClick={() => onOpen('oee')} />
-      <Kpi label="Machine downtime" icon="wrench" value={num(k.downtime.total_min)} unit="min"
+      <Kpi label={pw('Downtime')} icon="wrench" value={num(k.downtime.total_min)} unit="min"
         tone={k.downtime.by_category['Mechanical breakdown'] > 0 ? 'danger' : undefined}
-        sub={Object.entries(k.downtime.by_category).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 2)
+        sub={<>{Object.entries(k.downtime.by_category).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 2)
           .map(([c, v]) => `${c} ${num(v)}`).join(' · ') || 'No downtime recorded'}
+          {k.downtime.idle_no_orders_min > 0 && <span className="block text-fg-faint">+ {num(k.downtime.idle_no_orders_min)} min idle · no orders (not a machine loss)</span>}</>}
         onClick={() => onOpen('downtime')} />
-      <Kpi label="Workforce utilization" icon="users" value={pct(wf.utilization_pct)}
+      <Kpi label={pw('Workforce utilization')} icon="users" value={pct(wf.utilization_pct)}
         tone={wf.deployed < wf.required ? 'warning' : undefined}
-        sub={<>{wf.deployed} deployed / {wf.required} required · idle {num(wf.idle_hours, 1)} h ({num(wf.idle_fte, 1)} FTE)</>}
-        delta={wf.previous_output_per_worker ? { value: wf.output_per_worker_hour - wf.previous_output_per_worker, good: wf.output_per_worker_hour >= wf.previous_output_per_worker, unit: '/h' } : null}
+        sub={<>{wf.deployed} deployed / {wf.required} required · idle {num(wf.idle_hours, 1)} h ({num(wf.idle_fte, 1)} FTE)
+          {opwDelta != null && <span className="block text-fg-faint">Output/worker-h {shiftCmp ? `${shiftCmp}: ` : `vs ${e.previous_label}: `}{num(wf.current_output_per_worker_hour, 1)} vs {num(wf.previous_output_per_worker, 1)}</span>}</>}
+        delta={opwDelta != null ? { value: opwDelta, good: opwDelta >= 0, unit: '/h' } : null}
         onClick={() => onOpen('workforce')} />
-      <Kpi label="Labour cost per pillow" icon="dollar" value={k.labour_cost.per_pillow != null ? `$${k.labour_cost.per_pillow.toFixed(3)}` : '—'}
-        delta={k.labour_cost.previous_per_pillow ? { value: (k.labour_cost.per_pillow - k.labour_cost.previous_per_pillow) * 100, good: k.labour_cost.per_pillow <= k.labour_cost.previous_per_pillow, unit: '¢' } : null}
-        sub={`${money(k.labour_cost.total)} paid labour today · shift 2 +$${k.labour_cost.shift2_differential.toFixed(2)}/h`}
+      <Kpi label={pw('Labour cost per pillow')} icon="dollar" value={lc.per_pillow != null ? `$${lc.per_pillow.toFixed(3)}` : '—'}
+        delta={cppDelta != null ? { value: cppDelta * 100, good: cppDelta <= 0, unit: '¢' } : null}
+        sub={<>{money(lc.total)} paid labour in scope · shift 2 +${lc.shift2_differential.toFixed(2)}/h
+          {cppDelta != null && <span className="block text-fg-faint">{shiftCmp ? `${shiftCmp}: ` : `vs ${e.previous_label}: `}${lc.current_per_pillow.toFixed(3)} vs ${lc.previous_per_pillow.toFixed(3)}</span>}</>}
         onClick={() => onOpen('labour')} />
       <Kpi label="Packaging accuracy" icon="shield" value={pct(k.packaging.accuracy_pct, 2)} tone={effTone(k.packaging.accuracy_pct, 99.5, 98.5)}
         sub={<>{num(k.packaging.failed)} failed of {num(k.packaging.inspected)} cartons{k.packaging.blocked ? <> · <b className="text-danger">{k.packaging.blocked} blocked</b></> : ''}</>}
         onClick={() => navigate('/quality')} />
-      <Kpi label="Inventory availability" icon="box" value={compact(inv.fg_available)} unit="pillows FG"
+      <Kpi label={pw('Inventory availability')} icon="box" value={compact(inv.fg_available)} unit="pillows FG"
         tone={inv.materials_critical ? 'danger' : inv.materials_low ? 'warning' : undefined}
         sub={<>{inv.materials_critical} critical · {inv.materials_low} low raw materials
           {inv.lines_stopped_for_material ? <> · <b className="text-danger">{inv.lines_stopped_for_material} lines stopped</b></> : ''}
           {inv.orders_with_material_risk ? ` · ${inv.orders_with_material_risk} orders at material risk` : ''}</>}
         onClick={() => onOpen('inventory')} />
-      <Kpi label="Shipment readiness" icon="truck" value={`${k.shipment.ready}/${k.shipment.scheduled}`} unit="orders ready"
-        tone={k.shipment.at_risk ? 'danger' : 'success'}
-        sub={<>Due within 48 h · {pct(k.shipment.pct, 0)} ready{k.shipment.at_risk ? <> · <b className="text-danger">{k.shipment.at_risk} at risk</b></> : ''}</>}
+      <Kpi label="Shipment readiness" icon="truck" value={`${ship.ready}/${ship.scheduled}`} unit="orders ready"
+        tone={ship.at_risk ? 'danger' : 'success'}
+        sub={<>Due within {ship.horizon_h || 24} h · {pct(ship.pct, 0)} picked &amp; staged
+          {ship.on_track ? ` · ${ship.on_track} on track` : ''}
+          {ship.at_risk ? <> · <b className="text-danger">{ship.at_risk} at risk</b></> : ''}</>}
         onClick={() => navigate('/dispatch')} />
-      <Kpi label="Potential detention" icon="clock" value={money(k.detention.projected + k.detention.incurred)}
+      <Kpi label={pw('Potential detention')} icon="clock" value={money(k.detention.projected + k.detention.incurred)}
         tone={k.detention.projected + k.detention.incurred > 0 ? 'warning' : 'success'}
-        sub={`Est. ${money(k.detention.projected)} upcoming + ${money(k.detention.incurred)} today (illustrative $${k.detention.charge_per_truck}/truck)`}
+        sub={`Est. ${money(k.detention.projected)} upcoming + ${money(k.detention.incurred)} today ($${k.detention.charge_per_truck}/truck)`}
         onClick={() => navigate(linkTo('dispatch', 'detention', ''))} />
     </div>
   );
@@ -70,14 +89,19 @@ function KpiDrawer({ kind, data, onClose }) {
   const cmp = data.comparison;
   const titles = {
     production: 'Production output', efficiency: 'Production efficiency', oee: 'Overall Equipment Effectiveness',
-    downtime: 'Machine downtime', workforce: 'Workforce utilization', labour: 'Labour cost per pillow', inventory: 'Inventory availability',
+    downtime: 'Downtime', workforce: 'Workforce utilization', labour: 'Labour cost per pillow', inventory: 'Inventory availability',
   };
+  const e = k.efficiency;
   let body = null;
   if (kind === 'production' || kind === 'efficiency') {
     body = (
       <>
-        <KV cols={3} items={[['Actual', num(k.production.actual)], ['Plan to date', num(k.production.planned_to_date)], ['Day target', num(k.production.target)],
-          ['Efficiency', pct(k.efficiency.pct)], [k.efficiency.previous_label, pct(k.efficiency.previous_shift_pct)], ['Status', k.production.status]]} />
+        <KV cols={3} items={[['Actual', num(k.production.actual)], ['Plan to date', num(k.production.planned_to_date)], ['Target', num(k.production.target)],
+          ['Efficiency', pct(e.pct)], [e.current_label && !e.shift_scope ? e.current_label : 'Status', e.current_label && !e.shift_scope ? pct(e.current_shift_pct) : k.production.status],
+          [e.previous_label, pct(e.previous_shift_pct)]]} />
+        {k.production.idle_no_orders_min > 0 && (
+          <p className="text-[11px] text-fg-muted mt-2">{num(k.production.idle_no_orders_min)} line-minutes idle with no production order queued are not planned time: they are excluded from the plan, the target and OEE.</p>
+        )}
         <p className="label-caps mt-4 mb-2">Hourly actual vs target</p>
         <MiniChart type="bar" height={200} legend data={{
           labels: data.hourly.map((h) => h.hour),
@@ -86,11 +110,11 @@ function KpiDrawer({ kind, data, onClose }) {
             { label: 'Actual', data: data.hourly.map((h) => h.actual), color: 'primary' },
           ],
         }} />
-        <p className="label-caps mt-4 mb-2">By factory</p>
+        <p className="label-caps mt-4 mb-2">By factory (same date and shift, plant-wide)</p>
         <div className="space-y-2.5">
-          {cmp.map((f) => <BarRow key={f.code} label={f.name} value={f.output} max={f.target} display={`${num(f.output)} / ${num(f.target)} · ${pct(f.efficiency_pct)} eff.`} tone={effTone(f.efficiency_pct)} />)}
+          {cmp.map((f) => <BarRow key={f.code} label={f.name} value={f.output} max={f.target || 1} display={`${num(f.output)} / ${num(f.target)} · ${pct(f.efficiency_pct)} eff.`} tone={effTone(f.efficiency_pct)} />)}
         </div>
-        <p className="text-[11px] text-fg-faint mt-4">Efficiency = actual output ÷ expected output for the productive time elapsed (planned rate × productive minutes, excluding lunch and breaks).</p>
+        <p className="text-[11px] text-fg-faint mt-4">Efficiency = actual output ÷ plan to date (planned rate × productive minutes elapsed, excluding lunch, breaks and time a line had no production order). The comparison is the selected (or current) shift against the shift before it.</p>
       </>
     );
   } else if (kind === 'oee') {
@@ -98,8 +122,8 @@ function KpiDrawer({ kind, data, onClose }) {
     body = (
       <>
         <div className="grid grid-cols-4 gap-2">
-          {[['Availability', o.availability_pct, 'Run time ÷ planned production time'], ['Performance', o.performance_pct, 'Actual ÷ (rated rate × run time)'],
-            ['Quality', o.quality_pct, 'First-pass good cartons ÷ inspected'], ['OEE', o.oee_pct, 'A × P × Q']].map(([l, v, d]) => (
+          {[['Availability', o.availability_pct, 'Run time ÷ planned production time (rate-weighted; idle with no orders is not planned time)'], ['Performance', o.performance_pct, 'Actual ÷ (rated rate × run time)'],
+            ['Quality', o.quality_pct, 'First-pass good cartons ÷ inspected'], ['OEE', o.oee_pct, 'A × P × Q (A × P = efficiency)']].map(([l, v, d]) => (
               <div key={l} className="tile"><p className="label-caps">{l}</p><p className="text-xl font-bold" style={{ color: `var(--color-${effTone(v, 90, 75)})` }}>{pct(v)}</p><p className="text-[10px] text-fg-faint mt-1 leading-snug">{d}</p></div>
           ))}
         </div>
@@ -108,12 +132,20 @@ function KpiDrawer({ kind, data, onClose }) {
     );
   } else if (kind === 'downtime') {
     const cats = Object.entries(k.downtime.by_category);
+    const idle = k.downtime.idle_no_orders_min || 0;
     body = (
       <>
-        <p className="text-sm text-fg mb-3"><b>{num(k.downtime.total_min)} min</b> of productive time lost in the selected period.</p>
+        <p className="text-sm text-fg mb-3"><b>{num(k.downtime.total_min)} min</b> of planned production time lost in the selected period (summed over lines).</p>
         <MiniChart type="bar" horizontal height={200} data={{ labels: cats.map(([c]) => c), datasets: [{ label: 'Minutes', data: cats.map(([, v]) => v), color: ['danger', 'info', 'warning', 'chart-5', 'chart-8'] }] }} />
+        {idle > 0 && (
+          <div className="tile mt-3 text-xs"><b className="text-fg">Idle · no orders: {num(idle)} min</b>
+            <span className="block text-fg-muted mt-0.5">Lines with no production order queued. Not a machine loss and not planned time, so it is excluded from the downtime above, the plan and OEE.</span></div>
+        )}
         <div className="grid grid-cols-3 gap-2 mt-4">
-          {cmp.map((f) => <div key={f.code} className="tile"><p className="label-caps">{f.name}</p><p className="text-lg font-bold text-fg">{num(f.downtime_min)} min</p></div>)}
+          {cmp.map((f) => (
+            <div key={f.code} className="tile"><p className="label-caps">{f.name}</p><p className="text-lg font-bold text-fg">{num(f.downtime_min)} min</p>
+              {f.idle_no_orders_min > 0 && <p className="text-[10px] text-fg-faint">+ {num(f.idle_no_orders_min)} min idle · no orders</p>}</div>
+          ))}
         </div>
       </>
     );
@@ -122,7 +154,7 @@ function KpiDrawer({ kind, data, onClose }) {
     body = (
       <>
         <KV cols={3} items={[['Required', w.required], ['Deployed', w.deployed], ['Absent', w.absent], ['Utilization', pct(w.utilization_pct)],
-          ['Idle', `${num(w.idle_hours, 1)} h`], ['Output / worker-hour', num(w.output_per_worker_hour, 1)],
+          ['Idle', `${num(w.idle_hours, 1)} h`], ['Output / worker-hour', `${num(w.output_per_worker_hour, 1)} (${num(w.worker_hours)} worker-h)`],
           ['Labour cost', money(k.labour_cost.total)], ['Cost per pillow', k.labour_cost.per_pillow != null ? `$${k.labour_cost.per_pillow.toFixed(3)}` : '—'],
           ['Below benchmark', w.below_benchmark]]} />
         <p className="label-caps mt-4 mb-2">Labour cost per pillow by factory</p>
@@ -138,7 +170,7 @@ function KpiDrawer({ kind, data, onClose }) {
           ['Critical materials', i.materials_critical], ['Low materials', i.materials_low], ['Lines stopped', i.lines_stopped_for_material]]} />
         {i.lowest && (
           <div className="tile tone-warning mt-4 text-xs">
-            Lowest cover: <b>{i.lowest.code}</b> {i.lowest.name} at {i.lowest.factory} — {i.lowest.days_cover} days ({num(i.lowest.available)} {i.lowest.uom})
+            Lowest cover: <b>{i.lowest.code}</b> {i.lowest.name} at {i.lowest.factory} — {i.lowest.days_cover ?? '—'} days ({num(i.lowest.on_hand)} {i.lowest.uom} on hand)
           </div>
         )}
       </>
@@ -147,7 +179,7 @@ function KpiDrawer({ kind, data, onClose }) {
   return <Drawer eyebrow="KPI detail" title={titles[kind]} width={560} onClose={onClose}>{body}</Drawer>;
 }
 
-function Comparison({ rows }) {
+function Comparison({ rows, subtitle }) {
   const metrics = [
     ['Production output', (r) => r.output, (r) => num(r.output), 'primary', (r) => r.target],
     ['Efficiency', (r) => r.efficiency_pct, (r) => pct(r.efficiency_pct), (r) => effTone(r.efficiency_pct), () => 110],
@@ -157,7 +189,7 @@ function Comparison({ rows }) {
     ['Shipment readiness', (r) => r.shipment_readiness_pct, (r) => pct(r.shipment_readiness_pct, 0), (r) => effTone(r.shipment_readiness_pct, 80, 50), () => 100],
   ];
   return (
-    <Card title="Factory performance comparison" subtitle="Today, all three plants">
+    <Card title="Factory performance comparison" subtitle={subtitle}>
       <div className="space-y-3.5">
         {metrics.map(([label, val, disp, tone, max]) => (
           <div key={label}>
@@ -292,6 +324,9 @@ export default function Overview() {
       {loading && !data && <Loading rows={6} height={60} />}
       {data && (
         <>
+          {filters.customer && (
+            <p className="text-[11px] text-fg-muted -mt-1">Customer filter applies to packaging accuracy and shipment readiness. Production, OEE, downtime, workforce, inventory and detention are plant-wide: output is not tracked per customer.</p>
+          )}
           <KpiGrid k={data.kpis} onOpen={setDrawer} navigate={navigate} />
           {/* xl: two independent columns, so each card keeps its content height instead of
               stretching to a taller neighbour (the S!AP list). Below xl the column wrappers
@@ -301,25 +336,28 @@ export default function Overview() {
               <div className="order-1 xl:order-none min-w-0"><TwinCard onOpen={openTwin} /></div>
               <div className="order-3 xl:order-none min-w-0">
                 <ChartCard title="Production performance — hourly actual vs target" type="bar" legend height={260}
-                  subtitle="Pillows completed each hour; target follows the shift calendar (breaks and lunch excluded)"
+                  subtitle="Pillows completed each hour; target follows the shift calendar (breaks, lunch and lines with no orders excluded)"
                   data={{
                     labels: data.hourly.map((h) => h.hour),
                     datasets: [
                       { label: 'Target', data: data.hourly.map((h) => h.planned), color: 'chart-8' },
                       { label: 'Actual', data: data.hourly.map((h) => h.actual), color: data.hourly.map((h) => (
-                        h.actual == null || h.hour.slice(0, 2) === data.sim_time.slice(11, 13) ? 'info'   // hour in progress
+                        h.actual == null || !h.completed ? 'info'   // hour in progress
                           : h.actual >= h.planned * 0.95 ? 'success' : h.actual >= h.planned * 0.85 ? 'warning' : 'danger')) },
                     ],
                   }} />
               </div>
               <div className="order-5 xl:order-none min-w-0"><Lifecycle stages={data.lifecycle} /></div>
-              <div className="order-6 xl:order-none min-w-0"><Comparison rows={data.comparison} /></div>
+              <div className="order-6 xl:order-none min-w-0">
+                <Comparison rows={data.comparison}
+                  subtitle={`${dateShort(data.date)}${data.shift ? ` · shift ${data.shift}` : ' · both shifts'} · all three plants${filters.customer ? ' (plant-wide, not filtered by customer)' : ''}`} />
+              </div>
               <div className="order-7 xl:order-none min-w-0"><InsightsCard page="overview" limit={5} title="Operational recommendations" /></div>
             </div>
             <div className="contents xl:flex xl:flex-col xl:gap-4 xl:min-w-0">
               <div className="order-2 xl:order-none min-w-0">
                 <SiapAdvisoriesCard factory={filters.factory} limit={4} compact title="S!AP advisories"
-                  subtitle="Machine-repair predictions, quality risk and RFID workforce patterns · illustrative models on simulated data" />
+                  subtitle="Machine-repair predictions, quality risk and RFID workforce patterns" />
               </div>
               <div className="order-4 xl:order-none min-w-0"><Attention items={data.attention} /></div>
             </div>

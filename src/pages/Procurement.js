@@ -9,22 +9,36 @@ import { useApi, useFocus } from '../hooks/useApi';
 import { useApp } from '../data/DataProvider';
 import { patch, post } from '../api/client';
 import { dateShort, dateTime, dayTime, linkTo, money, num, parseTs, pct } from '../utils';
+import LossCasesCard from '../components/loss/LossCasesCard';
 
 const TABS = [
   { value: 'pos', label: 'Purchase orders' },
   { value: 'shipments', label: 'Inbound shipments' },
   { value: 'materials', label: 'Material availability' },
   { value: 'suppliers', label: 'Supplier performance' },
+  { value: 'loss', label: 'Loss prevention' },
 ];
 const PO_VIEWS = [
   { value: '', label: 'All' }, { value: 'open', label: 'Open' }, { value: 'delayed', label: 'Delayed' }, { value: 'Received', label: 'Received' },
 ];
 const SHIP_VIEWS = [
-  { value: '', label: 'Active & recent' }, { value: 'expected', label: 'Expected inbound' }, { value: 'pending', label: 'Pending receipt' },
-  { value: 'delayed', label: 'Delayed' }, { value: 'received_today', label: 'Received (24 h)' },
+  { value: '', label: 'Active & recent' }, { value: 'expected', label: 'Expected (7 days)' }, { value: 'pending', label: 'Pending receipt' },
+  { value: 'delayed', label: 'Delayed' }, { value: 'received_today', label: 'Received today' },
 ];
 const MAT_VIEWS = [{ value: '', label: 'All materials' }, { value: 'short', label: 'Shortages (critical + low)' }];
-const STATUS_TONE = { Critical: 'danger', Low: 'warning', OK: 'success', 'No demand': 'neutral' };
+const STATUS_TONE = { Critical: 'danger', Low: 'warning', OK: 'success', 'No demand': 'neutral', Untracked: 'warning' };
+const COVER_NOTE = 'Days of stock = (on hand + deliveries usable before the stock-out) ÷ average daily use; the stock-out time is placed on the shift calendar. '
+  + 'Committed = what open production orders still need (fill and shell when made, bags, cartons and labels when packed); free = on hand − committed. '
+  + 'Status takes the lower of days of stock and free days ((on hand + on order − committed) ÷ use per day). '
+  + 'Production and Dispatch risk project the same stock with the lines’ current run rates, so their stock-out time can differ by a few hours.';
+
+function Committed({ row }) {
+  return (
+    <span>{num(row.reserved)}
+      {row.shortfall > 0 && <span className="block text-[10px] text-danger" title="Committed need above stock on hand">{num(row.shortfall)} over stock</span>}
+    </span>
+  );
+}
 
 const qtyFmt = (v, uom) => `${num(v)} ${uom || ''}`.trim();
 
@@ -36,6 +50,7 @@ function isoAddDays(iso, days) {
 }
 
 function DaysCover({ row }) {
+  if (row.status === 'Untracked') return <span className="text-warning text-[11px]" title={row.status_reason}>not tracked</span>;
   if (row.days_cover === null || row.days_cover === undefined) return <span className="text-fg-faint">—</span>;
   const tone = STATUS_TONE[row.status] || 'neutral';
   return (
@@ -93,7 +108,7 @@ function CreatePOModal({ initial, onClose }) {
   };
 
   return (
-    <Modal title="Create purchase order" eyebrow="Procurement" subtitle="Creates the PO and a scheduled inbound shipment (simulated ERP)"
+    <Modal title="Create purchase order" eyebrow="Procurement" subtitle="Creates the PO and a scheduled inbound shipment in the ERP"
       width={520} onClose={onClose}
       footer={<>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -396,13 +411,13 @@ function GoodsReceiptModal({ initial, onClose }) {
           {ship.status === 'Arrived' && (
             <div className="tile flex items-center gap-3">
               <Icon name="scan" size={18} className="text-primary" />
-              <p className="text-xs text-fg-muted flex-1">Start the receipt to scan pallets/bales with the (simulated) handheld scanner, or enter the counted quantity directly.</p>
+              <p className="text-xs text-fg-muted flex-1">Start the receipt to scan pallets/bales with the handheld scanner, or enter the counted quantity directly.</p>
               <Button size="sm" disabled={!allowed || busy} onClick={start}>Start receipt</Button>
             </div>
           )}
           {ship.status === 'Receiving' && (
             <div className="tile space-y-2">
-              <p className="label-caps flex items-center gap-1.5"><Icon name="scan" size={12} />Simulated scanner</p>
+              <p className="label-caps flex items-center gap-1.5"><Icon name="scan" size={12} />Handheld scanner</p>
               <div className="flex flex-wrap gap-1.5">
                 <Button size="sm" variant="soft" disabled={busy} onClick={() => scan(Math.round(expected * 0.25))}>+25% (one lot)</Button>
                 <Button size="sm" variant="soft" disabled={busy || scanned >= expected} onClick={() => scan(Math.max(0, expected - scanned))}>Scan remaining</Button>
@@ -461,16 +476,19 @@ function MaterialDrawer({ id, onClose, onCreatePo }) {
             <p className="label-caps mb-2">Stock by factory</p>
             <div className="tile p-0 overflow-x-auto">
               <table className="table">
-                <thead><tr><th>Factory</th><th>Available</th><th>Reserved</th><th>Incoming</th><th>Use / day</th><th>Days cover</th><th>Next delivery</th></tr></thead>
+                <thead><tr><th>Factory</th><th>On hand</th><th>Committed</th><th>Free</th><th>On order</th><th>Use / day</th><th>Days of stock</th><th>Stock-out</th><th>Next delivery</th></tr></thead>
                 <tbody>{data.stock.map((s) => (
                   <tr key={s.id}>
-                    <td className="cell-strong">{s.factory}</td><td>{num(s.available)}</td><td>{num(s.reserved)}</td><td>{num(s.incoming)}</td>
-                    <td>{num(s.consumption_per_day)}</td><td><DaysCover row={s} /></td><td>{dayTime(s.next_delivery)}</td>
+                    <td className="cell-strong">{s.factory}</td><td>{num(s.on_hand)}</td><td><Committed row={s} /></td><td>{num(s.available)}</td><td>{num(s.incoming)}</td>
+                    <td>{num(s.consumption_per_day)}</td><td><DaysCover row={s} /></td><td>{dayTime(s.runout_at)}</td><td>{dayTime(s.next_delivery)}</td>
                   </tr>
                 ))}</tbody>
               </table>
             </div>
-            <p className="text-[11px] text-fg-faint mt-1.5">Days of stock = available usable quantity ÷ average daily consumption. Alert when below the reorder threshold.</p>
+            {data.stock.filter((s) => s.status_reason && s.status !== 'OK').map((s) => (
+              <p key={s.id} className="text-[11px] mt-1.5" style={{ color: `var(--color-${STATUS_TONE[s.status] || 'neutral'})` }}>{s.factory}: {s.status_reason}.</p>
+            ))}
+            <p className="text-[11px] text-fg-faint mt-1.5">{COVER_NOTE} Alert when below the reorder threshold.</p>
           </div>
           <div>
             <p className="label-caps mb-2">Consuming production orders</p>
@@ -611,19 +629,19 @@ export default function Procurement() {
       {!s && summary.loading && <Loading rows={2} height={60} />}
       {s && (
         <KpiRow cols={6}>
-          <Kpi label="Open purchase orders" icon="clipboard" value={num(s.open_pos)} sub={`${money(s.open_po_value)} on order`}
+          <Kpi label="Open purchase orders" icon="clipboard" value={num(s.open_pos)} sub={`${money(s.open_po_value)} still to receive`}
             active={tab === 'pos' && poView === 'open'} onClick={() => kpiGo('pos', setPoView, 'open')} />
           <Kpi label="Expected inbound" icon="truck" value={num(s.expected_inbound)} sub="Shipments due within 7 days"
             active={tab === 'shipments' && shipView === 'expected'} onClick={() => kpiGo('shipments', setShipView, 'expected')} />
           <Kpi label="Goods received today" icon="check" value={num(s.received_today)} tone={s.received_today ? 'success' : undefined}
-            sub="Confirmed goods receipts" active={tab === 'shipments' && shipView === 'received_today'}
+            sub="Receipts confirmed since midnight" active={tab === 'shipments' && shipView === 'received_today'}
             onClick={() => kpiGo('shipments', setShipView, 'received_today')} />
           <Kpi label="Pending goods receipts" icon="hourglass" value={num(s.pending_receipts)} tone={s.pending_receipts ? 'warning' : undefined}
             sub="Arrived, not yet received" active={tab === 'shipments' && shipView === 'pending'} onClick={() => kpiGo('shipments', setShipView, 'pending')} />
           <Kpi label="Material shortages" icon="layers" value={num(s.shortages)} tone={s.critical ? 'danger' : s.shortages ? 'warning' : 'success'}
-            sub={`${s.critical} critical below 1.5 days`} active={tab === 'materials' && matView === 'short'} onClick={() => kpiGo('materials', setMatView, 'short')} />
+            sub={`${s.critical} critical${s.untracked ? ` · ${s.untracked} without stock record` : ''}`} active={tab === 'materials' && matView === 'short'} onClick={() => kpiGo('materials', setMatView, 'short')} />
           <Kpi label="Delayed deliveries" icon="clock" value={num(s.delayed)} tone={s.delayed ? 'danger' : 'success'}
-            sub="Supplier ETA moved out" active={tab === 'shipments' && shipView === 'delayed'} onClick={() => kpiGo('shipments', setShipView, 'delayed')} />
+            sub={`Supplier ETA moved out > ${s.delay_tolerance_h ?? 6} h`} active={tab === 'shipments' && shipView === 'delayed'} onClick={() => kpiGo('shipments', setShipView, 'delayed')} />
         </KpiRow>
       )}
 
@@ -696,19 +714,22 @@ export default function Procurement() {
                   columns={[
                     { key: 'code', header: 'Material', render: (r) => <span><b className="text-fg">{r.code}</b><span className="block text-[10px] text-fg-faint">{r.name}</span></span> },
                     ...(showFactory ? [{ key: 'factory', header: 'Factory' }] : []),
-                    { key: 'available', header: 'Available', render: (r) => qtyFmt(r.available, r.uom) },
-                    { key: 'reserved', header: 'Reserved', render: (r) => num(r.reserved) },
-                    { key: 'incoming', header: 'Incoming', render: (r) => num(r.incoming) },
+                    { key: 'on_hand', header: 'On hand', render: (r) => qtyFmt(r.on_hand, r.uom) },
+                    { key: 'reserved', header: 'Committed', render: (r) => <Committed row={r} /> },
+                    { key: 'available', header: 'Free', render: (r) => num(r.available) },
+                    { key: 'incoming', header: 'On order', render: (r) => num(r.incoming) },
                     { key: 'consumption_per_day', header: 'Use / day', render: (r) => num(r.consumption_per_day) },
                     { key: 'days_cover', header: 'Days of stock', render: (r) => <DaysCover row={r} /> },
+                    { key: 'runout_at', header: 'Stock-out', render: (r) => dayTime(r.runout_at) },
                     { key: 'reorder_point', header: 'Reorder point', render: (r) => num(r.reorder_point) },
                     { key: 'next_delivery', header: 'Next delivery', render: (r) => dayTime(r.next_delivery) },
-                    { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} tone={STATUS_TONE[r.status]} /> },
+                    { key: 'status', header: 'Status', render: (r) => <span title={r.status_reason}><StatusBadge status={r.status} tone={STATUS_TONE[r.status]} /></span> },
                   ]} />
               )}
             </div>
           )}
 
+          {tab === 'loss' && <LossCasesCard bare factory={filters.factory} stage="procurement" subtitle="Receiving shortages, seal mismatches and after-hours material-store access: each signal is worked to an outcome before the GRN is closed" />}
           {tab === 'suppliers' && (
             <div className="p-4 space-y-4">
               {sups.loading && !sups.data && <Loading />}

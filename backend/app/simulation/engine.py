@@ -15,12 +15,13 @@ import random
 from collections import defaultdict
 from datetime import datetime, time, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .. import models as m
 from ..config import get_settings
-from ..services import alerts, calendar as cal, inventory, machine_health as mh, planning, quality
+from ..services import alerts, calendar as cal, inventory, loss, machine_health as mh, planning, quality, readiness
+from ..services import procurement as procurement_svc
 from ..services.common import business_rules, log_event, next_number, state
 from ..services.planning import OPEN_PO, SEWERS_REQUIRED, machine_condition, sewing_capacity
 from . import rfid
@@ -31,6 +32,9 @@ DOCKS = ["D1", "D2", "D3", "D4"]
 RECEIVING_DOCKS = ["R1", "R2"]
 TELEMETRY_EVERY_MIN = 10
 PICK_BUDGET: dict[int, float] = {}   # unused pick capacity carried between ticks
+ALLOC_HORIZON_H = 72   # free finished-goods stock is reserved for orders shipping within this window
+PICK_HORIZON_H = 24    # orders are picked to the staging lane up to a day before their truck
+ORDER_LOAD = 0.72      # new demand as a share of rated line capacity (lines achieve ~80-85 % of rated)
 PUTAWAY_BUDGET: dict[int, float] = {}
 PACK_BUDGET: dict[int, float] = {}     # packing-station capacity carried between ticks (per line)
 FAST_MODE = False  # seed: skip per-tick alert evaluation
@@ -39,6 +43,7 @@ FAST_MODE = False  # seed: skip per-tick alert evaluation
 def reseed(seed: int) -> None:
     RNG.seed(seed)
     RNG_WIP.seed(seed + 31)
+    loss.reseed(seed)
     rfid.reseed(seed)
 
 
@@ -48,6 +53,8 @@ def downtime_category(reason: str | None) -> str:
         return "Material shortage"
     if r.startswith("operator"):
         return "Operator-related delay"
+    if r.startswith("no production order"):
+        return "No orders"  # line starved of work: not a machine loss, excluded from planned time
     return "Other"
 
 
@@ -473,19 +480,28 @@ def simulate_packaging(ctx: TickCtx, factory) -> None:
                 detected = ppc + 1
             elif r < 0.0068:
                 defect = RNG.choice(["Sewing defect", "Label mismatch", "Polybag seal failure", "Compression failure"])
-            source, conf = "simulated", round(RNG.uniform(0.93, 0.995), 3)
+            source, conf = "edge-vision", round(RNG.uniform(0.93, 0.995), 3)
             if ln.id in cams:
                 detected, conf, source = count_pillows(detected, RNG)
             quality.pack_carton(db, po, ln, t, detected, defect, source, conf)
-    # Close partial pallets of finished production orders once their queue drains.
-    for po in db.scalars(select(m.ProductionOrder).where(m.ProductionOrder.factory_id == factory.id,
-                                                         m.ProductionOrder.status == "Completed",
-                                                         m.ProductionOrder.pack_queue < 1)):
+    # Close the last (partial) pallet of a finished production order once what is left in its packing
+    # queue cannot fill another carton; those few loose pillows go back to the line as rework stock.
+    open_pallet_pos = select(m.Pallet.po_id).where(m.Pallet.factory_id == factory.id, m.Pallet.status == "Open")
+    for po in db.scalars(select(m.ProductionOrder).where(
+            m.ProductionOrder.factory_id == factory.id, m.ProductionOrder.status == "Completed",
+            (m.ProductionOrder.pack_queue > 0) | m.ProductionOrder.id.in_(open_pallet_pos))):
+        ppc = ctx.skus[po.sku_id].pillows_per_carton
+        if po.pack_queue >= ppc:
+            continue
+        if po.pack_queue > 0:
+            log_event(db, ctx.b, factory.id, "quality", "loose_pillows",
+                      f"{po.number}: {po.pack_queue} loose pillow(s) short of a full carton returned to rework", "production_order", po.id)
+            po.pack_queue = 0
         quality.close_open_pallet(db, po, ctx.b)
     # Blocked cartons older than 90 minutes are reworked by the packing team.
     for c in db.scalars(select(m.Carton).where(m.Carton.factory_id == factory.id, m.Carton.status == "Blocked",
                                                m.Carton.created_at < ctx.b - timedelta(minutes=90)).limit(6)):
-        quality.rework(db, c, ctx.b, "sim:packing-team")
+        quality.rework(db, c, ctx.b, "Packing team")
 
 
 # ─── warehouse ───────────────────────────────────────────────────────────
@@ -507,16 +523,18 @@ def simulate_warehouse(ctx: TickCtx, factory) -> None:
     for p in pending:
         loc = inventory.suggest_location(db, p)
         if loc:
-            inventory.put_away(db, p, loc, ctx.b, "sim:warehouse")
+            inventory.put_away(db, p, loc, ctx.b, "Warehouse team")
     db.flush()
-    # allocation for orders scheduled to ship within 36 hours
-    for o in db.scalars(select(m.CustomerOrder).where(
+    # allocation: an order's own production is reserved for it whatever the ship date; free stock goes to
+    # orders shipping within ALLOC_HORIZON_H, earliest ship date first
+    for o in list(db.scalars(select(m.CustomerOrder).where(
             m.CustomerOrder.factory_id == factory.id, m.CustomerOrder.status == "Open",
-            m.CustomerOrder.scheduled_dispatch <= ctx.b + timedelta(hours=36),
-            m.CustomerOrder.allocated_qty < m.CustomerOrder.qty).order_by(m.CustomerOrder.scheduled_dispatch)):
-        inventory.allocate(db, o, ctx.b, "sim:warehouse")
+            m.CustomerOrder.allocated_qty < m.CustomerOrder.qty).order_by(m.CustomerOrder.scheduled_dispatch))):
+        soon = o.scheduled_dispatch <= ctx.b + timedelta(hours=ALLOC_HORIZON_H)
+        inventory.allocate(db, o, ctx.b, "Warehouse team", own_only=not soon)
     db.flush()
-    # picking for trucks due within 10 hours (expedited orders first)
+    top_up_shortfalls(ctx, factory)
+    # picking: orders whose truck (or ship date) is within PICK_HORIZON_H, expedited first, then by truck time
     rate = (factory.pick_rate_cartons_hr or 400) * prod * (crew / 5 if crew else 0.2)
     cap_cartons = min(rate * 2, PICK_BUDGET.get(factory.id, 0.0) + rate * hours)
     trucks = {t.order_id: t for t in db.scalars(select(m.TruckAppointment).where(
@@ -524,23 +542,44 @@ def simulate_warehouse(ctx: TickCtx, factory) -> None:
         m.TruckAppointment.status.in_(("Scheduled", "Arrived", "Loading"))))}
     allocs = list(db.scalars(select(m.Allocation).join(m.CustomerOrder).where(
         m.CustomerOrder.factory_id == factory.id, m.Allocation.status == "Reserved")))
-    def prio(a):
-        o = db.get(m.CustomerOrder, a.order_id)
+    def due(a):
         t = trucks.get(a.order_id)
-        return (0 if o.expedite_picking else 1, t.scheduled_arrival if t else datetime.max)
-    allocs.sort(key=prio)
+        return t.scheduled_arrival if t else db.get(m.CustomerOrder, a.order_id).scheduled_dispatch
+    allocs.sort(key=lambda a: (0 if db.get(m.CustomerOrder, a.order_id).expedite_picking else 1, due(a), a.id))
     for a in allocs:
         o = db.get(m.CustomerOrder, a.order_id)
-        t = trucks.get(a.order_id)
-        due_soon = t and t.scheduled_arrival <= ctx.b + timedelta(hours=10)
-        if not (due_soon or o.expedite_picking):
+        if not (due(a) <= ctx.b + timedelta(hours=PICK_HORIZON_H) or o.expedite_picking):
             continue
         cost = a.cartons * (0.5 if o.expedite_picking else 1)
         if cost > cap_cartons:
             break
         cap_cartons -= cost
-        inventory.pick(db, a, ctx.b, "sim:picker")
+        inventory.pick(db, a, ctx.b, "Picker")
     PICK_BUDGET[factory.id] = max(0.0, cap_cartons)
+
+
+def top_up_shortfalls(ctx: TickCtx, factory) -> None:
+    """An order whose own production is finished and packed but which still lacks goods (rejected
+    cartons, a confirmed loss) and cannot be covered from stock gets a top-up production order."""
+    db = ctx.db
+    orders = list(db.scalars(select(m.CustomerOrder).where(
+        m.CustomerOrder.factory_id == factory.id, m.CustomerOrder.status == "Open",
+        m.CustomerOrder.allocated_qty < m.CustomerOrder.qty)))
+    if not orders:
+        return
+    pos_by = readiness.order_pos(db, [o.id for o in orders])
+    waiting = [o for o in orders if pos_by[o.id] and all(
+        p.status == "Completed" and (p.pack_queue or 0) == 0 for p in pos_by[o.id])]
+    if not waiting:
+        return
+    blocked = {r[0] for r in db.execute(select(m.Carton.po_id).where(
+        m.Carton.factory_id == factory.id, m.Carton.status == "Blocked"))}
+    waiting = [o for o in waiting if not any(p.id in blocked for p in pos_by[o.id])]
+    cover = readiness.coverable_stock(db, waiting)
+    for o in waiting:
+        short = o.qty - o.allocated_qty - cover.get(o.id, 0)
+        if short > 0:
+            planning.queue_top_up(db, o, short, ctx.b, "Planner")
 
 
 # ─── inbound ─────────────────────────────────────────────────────────────
@@ -559,18 +598,54 @@ def simulate_inbound(ctx: TickCtx, factory) -> None:
             log_event(db, ctx.b, factory.id, "procurement", "shipment_arrived",
                       f"{s.ref} arrived at dock {s.dock}: {s.qty:,.0f} {ctx.materials[s.material_id].uom} {ctx.materials[s.material_id].code}",
                       "shipment", s.id)
-        elif s.status == "Arrived" and s.actual_arrival and s.actual_arrival <= ctx.b - timedelta(hours=6):
-            from ..services.procurement import confirm_receipt
-            confirm_receipt(db, s, s.qty, 0.0, ctx.b, "sim:receiving", "Auto-received by simulation after 6 h at dock")
-        if po and po.status in ("Open", "Partially Received") and s.status in ("Scheduled", "In Transit") \
-                and s.expected_arrival > (s.original_expected_arrival or s.expected_arrival):
+        elif s.status == "Arrived" and s.actual_arrival:
+            # receiving clears a delivery within 6 h; one the plant has run short of (< 1 day of cover) goes first
+            st = ctx.stock.get((factory.id, s.material_id))
+            urgent = st is not None and (st.avg_daily_consumption or 0) > 0 and st.on_hand < st.avg_daily_consumption
+            if s.actual_arrival <= ctx.b - timedelta(hours=1 if urgent else 6):
+                from ..services.procurement import confirm_receipt
+                confirm_receipt(db, s, s.qty, 0.0, ctx.b, "Receiving",
+                                "Received first: material below one day of cover" if urgent
+                                else "Received after dock check")
+        if po and po.status in ("Open", "Partially Received") and procurement_svc.is_delayed(s):
             po.status = "Delayed"
     auto_replenish(ctx, factory)
 
 
+MRP_LAST: dict[int, datetime] = {}
+
+
 def auto_replenish(ctx: TickCtx, factory) -> None:
-    """MRP-style replenishment by the simulated procurement team: raise a PO when
-    cover falls below the reorder threshold and open supply cannot cover the lead time."""
+    """MRP run by the simulated procurement team (hourly): for every material whose free stock does not
+    cover what open production orders need, or whose cover is below the reorder threshold, raise a PO
+    for the recommended quantity (lead time + safety + a week, at least the committed need), net of stock
+    and supply on order. One MRP PO per material per day."""
+    from ..services.procurement import create_po
+    db = ctx.db
+    last = MRP_LAST.get(factory.id)
+    if last and ctx.b - last < timedelta(hours=1):
+        return
+    MRP_LAST[factory.id] = ctx.b
+    recent = {p.material_id for p in db.scalars(select(m.PurchaseOrder).where(
+        m.PurchaseOrder.factory_id == factory.id, m.PurchaseOrder.created_by == "MRP",
+        m.PurchaseOrder.order_date >= ctx.b - timedelta(days=1)))}
+    suppliers = list(db.scalars(select(m.Supplier)))
+    for r in inventory.material_rows(db, [factory.id], ctx.b):
+        if not r["tracked"] or r["material_id"] in recent or r["status"] not in ("Critical", "Low"):
+            continue
+        mat = ctx.materials[r["material_id"]]
+        sup = next((s for s in suppliers if mat.code in (s.material_codes or [])), None)
+        if not sup:
+            continue
+        qty = inventory.recommended_reorder(r, sup.lead_time_days)
+        if qty <= 0:
+            continue
+        create_po(db, factory.id, sup.id, mat.id, qty, ctx.b + timedelta(days=sup.lead_time_days), ctx.b, "MRP",
+                  notes=f"MRP: {r['status_reason']}")
+    return
+
+
+def _auto_replenish_cover_only(ctx: TickCtx, factory) -> None:  # previous rule, kept for reference
     from ..services.procurement import create_po
     db = ctx.db
     incoming = {}
@@ -578,7 +653,7 @@ def auto_replenish(ctx: TickCtx, factory) -> None:
                                                         m.InboundShipment.status.in_(("Scheduled", "In Transit", "Arrived", "Receiving")))):
         incoming[s.material_id] = incoming.get(s.material_id, 0) + s.qty
     recent = {p.material_id for p in db.scalars(select(m.PurchaseOrder).where(
-        m.PurchaseOrder.factory_id == factory.id, m.PurchaseOrder.created_by == "sim:mrp",
+        m.PurchaseOrder.factory_id == factory.id, m.PurchaseOrder.created_by == "MRP",
         m.PurchaseOrder.order_date >= ctx.b - timedelta(days=1)))}
     suppliers = list(db.scalars(select(m.Supplier)))
     for (fid, mid), st in ctx.stock.items():
@@ -590,7 +665,7 @@ def auto_replenish(ctx: TickCtx, factory) -> None:
         if not sup or incoming.get(mid, 0) >= cons * (sup.lead_time_days + 2):
             continue
         qty = round(cons * (30 if mat.category == "Shell" else 8), -2)
-        create_po(db, factory.id, sup.id, mid, qty, ctx.b + timedelta(days=sup.lead_time_days), ctx.b, "sim:mrp",
+        create_po(db, factory.id, sup.id, mid, qty, ctx.b + timedelta(days=sup.lead_time_days), ctx.b, "MRP",
                   notes="Auto-replenishment: cover below reorder threshold")
 
 
@@ -611,7 +686,7 @@ def depart(db: Session, t: m.TruckAppointment, when: datetime, user: str, rules:
         a.status = "Loaded"
     log_event(db, when, o.factory_id, "dispatch", "dispatched",
               f"{t.ref} departed with {o.number}: {t.loaded_qty:,} pillows" +
-              (f" — detention ${t.detention_charge:,.0f} (illustrative)" if t.detention_charge else ""), "order", o.id, user)
+              (f" — detention ${t.detention_charge:,.0f}" if t.detention_charge else ""), "order", o.id, user)
 
 
 def start_loading(t: m.TruckAppointment, when: datetime) -> None:
@@ -666,13 +741,14 @@ def simulate_dispatch(ctx: TickCtx, factory) -> None:
                     if t.wait_min > 360:  # carrier releases the truck; the order is rebooked at projected readiness
                         t.status = "Cancelled"
                         t.detention_charge = ctx.rules["detention_charge"]
-                        t.delay_reason = f"Released after {t.wait_min / 60:.0f} h wait ({info['readiness']['status']})"
-                        o.scheduled_dispatch = max(ctx.b + timedelta(hours=2), (info["ready_eta"] or ctx.b) + timedelta(hours=1))
+                        t.delay_reason = f"Released ({info['readiness']['status']})"  # wait length is in wait_min
+                        o.scheduled_dispatch = (max(ctx.b + timedelta(hours=2), info["ready_eta"] + timedelta(hours=1))
+                                                if info["ready_eta"] else ctx.b + timedelta(hours=24))
                         log_event(db, ctx.b, factory.id, "dispatch", "truck_released",
                                   f"{t.ref} released after {t.wait_min / 60:.1f} h; {o.number} rebooked for {o.scheduled_dispatch:%a %H:%M}",
                                   "order", o.id)
         if t.status == "Loading" and t.loading_start + timedelta(minutes=t.expected_loading_min or 60) <= ctx.b:
-            depart(db, t, t.loading_start + timedelta(minutes=t.expected_loading_min or 60), "sim:dock", ctx.rules)
+            depart(db, t, t.loading_start + timedelta(minutes=t.expected_loading_min or 60), "Dock team", ctx.rules)
     for o in db.scalars(select(m.CustomerOrder).where(m.CustomerOrder.factory_id == factory.id,
                                                       m.CustomerOrder.status == "Dispatched",
                                                       m.CustomerOrder.dispatched_at <= ctx.b - timedelta(hours=30))):
@@ -699,19 +775,60 @@ CARRIERS = ["J.B. Hunt", "Schneider", "Werner", "Knight-Swift", "XPO", "Old Domi
 
 
 # ─── new demand ─────────────────────────────────────────────────────────
+SHIP_SLOTS = (8, 10, 13, 15)
+SHIP_BUFFER_H = 12  # promised ship date leaves this much slack after the projected ready time
+
+
+def _ship_slot(t: datetime) -> datetime:
+    """First customer pick-up slot at or after t."""
+    d = t.date()
+    while True:
+        for h in SHIP_SLOTS:
+            c = datetime.combine(d, time(h, 0))
+            if c >= t:
+                return c
+        d += timedelta(days=1)
+
+
 def maybe_new_order(ctx: TickCtx, factory) -> None:
-    minutes = (ctx.b - ctx.a).total_seconds() / 60
+    """New customer demand at about ORDER_LOAD of the plant's effective line capacity.
+
+    The ship date is quoted from the real line queues: the order goes to the line that can finish it
+    first, and the date allows for packing, inspection, put-away, picking and SHIP_BUFFER_H of slack."""
+    lines = [ln for ln in ctx.lines if ln.factory_id == factory.id]
+    cap_h = sum(ln.planned_rate * (ln.base_efficiency or 1.0) for ln in lines)  # pillows per productive hour
     scale = (factory.daily_target or 20000) / 20000
-    if ctx.total_pm <= 0 or RNG.random() > minutes / 170 * scale:
+    mean_qty = 4200 * max(0.6, scale)
+    if ctx.total_pm <= 0 or not cap_h or RNG.random() > ctx.total_pm / 60 * cap_h * ORDER_LOAD / mean_qty:
         return
     db = ctx.db
-    skus = list(ctx.skus.values())
-    sku = RNG.choice(skus)
+    # the plant's product range: SKUs whose fill and shell materials it stocks
+    skus = [k for k in ctx.skus.values()
+            if (factory.id, k.fill_material_id) in ctx.stock and (factory.id, k.shell_material_id) in ctx.stock]
+    if not skus:
+        return
+    sku = RNG.choice(sorted(skus, key=lambda k: k.id))
     ppc = sku.pillows_per_carton
     qty = max(ppc, int(RNG.uniform(2400, 6000) * max(0.6, scale) // ppc * ppc))
-    line_day = max(1.0, min(ln.planned_rate for ln in ctx.lines if ln.factory_id == factory.id) * 15)
-    lead_days = max(RNG.randint(2, 5), int(qty / line_day) + 3)  # quote a feasible ship date
-    ship = datetime.combine((ctx.b + timedelta(days=lead_days)).date(), time(RNG.choice([8, 10, 13, 15]), 0))
+    pctx = planning.PlanCtx(db, [factory.id], ctx.b)
+    queues = pctx.current_queues()
+    best, best_done = None, None
+    for ln in pctx.lines:
+        rate = pctx.line_rate(ln)
+        if rate < 1:
+            continue
+        res, _ = planning.evaluate_line(pctx, ln, queues[ln.id])
+        free_at = max([r["end"] for r in res.values()], default=pctx.available_from(ln))
+        last_sku = queues[ln.id][-1].sku_id if queues[ln.id] else ln.current_sku_id
+        co = pctx.changeover_min(ln) if last_sku not in (None, sku.id) else 0.0
+        done = cal.add_productive(free_at, co + qty / rate * 60)
+        if best_done is None or done < best_done:
+            best, best_done = ln, done
+    if best is None:
+        return
+    ready = cal.add_productive(best_done, planning.POST_PRODUCTION_LAG_MIN)
+    quoted = ctx.b + timedelta(days=RNG.randint(1, 3))  # customer's requested lead time (FG racks hold ~3 days)
+    ship = _ship_slot(max(quoted, ready + timedelta(hours=SHIP_BUFFER_H)))
     # Provisional number = the final ORD-{500 + id}; always above the seeded ORD-496…543 range.
     o = m.CustomerOrder(number=next_number(db, m.CustomerOrder, "ORD-", 500), customer_id=sku.customer_id,
                         factory_id=factory.id, sku_id=sku.id, qty=qty, order_date=ctx.b,
@@ -720,22 +837,14 @@ def maybe_new_order(ctx: TickCtx, factory) -> None:
     db.add(o)
     db.flush()
     o.number = f"ORD-{500 + o.id}"
-    pctx = planning.PlanCtx(db, [factory.id], ctx.b)
-    best, best_end = None, None
-    for ln in pctx.lines:
-        q = pctx.current_queues()[ln.id]
-        res, _ = planning.evaluate_line(pctx, ln, q)
-        end = max([r["end"] for r in res.values()], default=pctx.available_from(ln))
-        if best_end is None or end < best_end:
-            best, best_end = ln, end
     seq = max([p.sequence or 0 for p in pctx.pos if p.line_id == best.id], default=0) + 1
     po = m.ProductionOrder(number=next_number(db, m.ProductionOrder, "PRD-", 24000), customer_order_id=o.id,
                            factory_id=factory.id, sku_id=sku.id, line_id=best.id, sequence=seq, required_qty=qty,
-                           start_date=ctx.b, required_completion=ship - timedelta(hours=18), priority=o.priority,
+                           start_date=ctx.b, required_completion=ship - timedelta(hours=SHIP_BUFFER_H), priority=o.priority,
                            status="Planned")
     db.add(po)
     log_event(db, ctx.b, factory.id, "dispatch", "order_received",
-              f"New order {o.number}: {qty:,} × {sku.code} for {ctx.skus[sku.id].customer.name}, ships {ship:%b %d}",
+              f"New order {o.number}: {qty:,} × {sku.code} for {ctx.skus[sku.id].customer.name}, ships {ship:%b %d %H:%M}",
               "order", o.id)
 
 
@@ -795,6 +904,7 @@ def process_block(db: Session, a: datetime, b: datetime) -> None:
         simulate_inbound(ctx, f)
         simulate_dispatch(ctx, f)
         maybe_new_order(ctx, f)
+    loss.simulate(db, a, b, ctx.factories)  # own random stream: the production sequence is unchanged
     simulate_machines(ctx)
     db.flush()
     planning.recompute(db, b)
@@ -812,7 +922,7 @@ def step(db: Session, minutes: float) -> datetime:
             process_block(db, a, day_end)
         rollover(db, a.date())
         b = datetime.combine(a.date() + timedelta(days=1), cal.DAY_START)
-        log_event(db, b, None, "system", "day_start", f"Simulation advanced to {b:%a %b %d} shift 1 (non-production hours skipped)")
+        log_event(db, b, None, "system", "day_start", f"Shift 1 started {b:%a %b %d} (lines closed 23:00–06:00)")
     elif a.time() < cal.DAY_START:
         b = datetime.combine(a.date(), cal.DAY_START)
     else:

@@ -2,21 +2,26 @@
 
    createFacilityScene(container, data, callbacks) builds the plant once from
    the facility payload and returns an API:
-     update(data)          apply the latest live state (every simulation tick)
+     update(data)          apply the latest live state (every simulation tick), incl. data.loss markers
      setView('top'|'3d')   orthographic top view or orbiting 3D view
-     setLayers({...})      workers, flow, labels, counts, readers, heat
+     setLayers({...})      workers, flow, labels, counts, readers, heat, security (loss markers)
      select(lineId|null)   highlight a line
      focusStage(key|null)  highlight every station of one process step
+     setLoss(cases)        replace the loss-prevention case markers (also done by update)
+     selectLoss(id|null)   highlight one loss marker
+     focusLoss(id)         highlight a loss marker and move the camera onto it
      dispose()
-   callbacks: onSelectLine(id), onSelectWorker(id), onHover({kind, ...}|null, x, y) */
+   callbacks: onSelectLine(id), onSelectWorker(id), onSelectLoss(id), onHover({kind, ...}|null, x, y) */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import {
-  BOUNDS, DOCK_WALL_X, DOCK_Z, LINE_STATUS_COLOR, MAIN_AISLE_Z, NO_READ, OPERATOR_DZ, PACK_X, PALLET, QA, RACK,
-  RECV_WALL_X, RECV_Z, ROLE_COLOR, ROOMS, STATE_COLOR, SX, ZONES, hash, lineZ, rackX, workerTarget,
+  BOUNDS, DOCK_WALL_X, DOCK_Z, FLOOR, FLOOR_X1, GATE, LINE_STATUS_COLOR, MAIN_AISLE_Z, NO_READ, OPERATOR_DZ, PACK_X, PALLET,
+  QA, RACK, RECV_WALL_X, RECV_Z, ROLE_COLOR, ROOMS, STATE_COLOR, SX, ZONES, floorLaneZ, floorSlot, hash, lineZ, rackX,
+  workerTarget,
 } from './layout';
+import { createLossLayer } from './lossMarkers';
 
 const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('en-US'));
 const MAX_PILLOWS = 900;
@@ -196,7 +201,8 @@ export function createFacilityScene(container, initial, callbacks = {}) {
   });
   // exterior walls (low, so the top view stays readable)
   const wallMat = mat(0x2a3b55, { transparent: true, opacity: 0.9 });
-  wall(-88, -49, 84, -49, 3.2, wallMat, root);
+  wall(-88, -49, GATE.x - GATE.half, -49, 3.2, wallMat, root);     // north wall, open at the staff exit gate
+  wall(GATE.x + GATE.half, -49, 84, -49, 3.2, wallMat, root);
   wall(-88, 39, 84, 39, 3.2, wallMat, root);
   wall(-88, -49, -88, -15, 3.2, wallMat, root);
   wall(-88, -9, -88, 5, 3.2, wallMat, root);
@@ -225,6 +231,10 @@ export function createFacilityScene(container, initial, callbacks = {}) {
   box(5, 0.9, 1.4, mat(0x6b5a3a), -11.5, 0.45, -44.5, root);               // supervisor desk
   box(7, 1.8, 1.2, mat(0x7a4b1e), 2.5, 0.9, -45.6, root);                   // maintenance crib shelving
   for (let i = 0; i < 4; i += 1) box(0.9, 1.9, 0.6, mat(0x5b6b86), -27.6 + i * 1.1, 0.95, -46.3, root);  // lockers
+  // staff exit gate: RFID portal posts and the apron inside the door
+  floorRect(GATE.x - GATE.half, GATE.x + GATE.half, GATE.z + 0.2, GATE.z + 3.4, 0x2a2440, root, 0.035);
+  const gatePost = mat(0x94a3b8, { metalness: 0.5 });
+  [-GATE.half, GATE.half].forEach((dx) => box(0.35, 3.6, 0.35, gatePost, GATE.x + dx, 1.8, GATE.z, root));
 
   // ── zone labels ─────────────────────────────────────────────────────
   const staticLabels = [];
@@ -243,6 +253,10 @@ export function createFacilityScene(container, initial, callbacks = {}) {
     root.add(l);
     staticLabels.push(l);
   });
+  const gateLabel = label('Staff exit', 'tw-room');
+  gateLabel.position.set(GATE.x, 0.3, GATE.z + 4.6);
+  root.add(gateLabel);
+  staticLabels.push(gateLabel);
   const noReadLabel = label(NO_READ.label, 'tw-room tw-room-muted');
   noReadLabel.position.set(NO_READ.x, 0.3, NO_READ.z + 4.2);
   root.add(noReadLabel);
@@ -271,6 +285,7 @@ export function createFacilityScene(container, initial, callbacks = {}) {
     readerMeshes.push(ring);
   };
   Object.entries(ROOMS).forEach(([name, r]) => addReader((r.x0 + r.x1) / 2, name === 'Material store' ? r.z0 : r.z1));
+  addReader(GATE.x, GATE.z + 1.4);
 
   // ── shared geometry/materials ──────────────────────────────────────
   const M = {
@@ -451,6 +466,37 @@ export function createFacilityScene(container, initial, callbacks = {}) {
   palletBase.count = 0;
   root.add(palletBase);
 
+  // ── zone D: bulk floor lanes in front of the docks ─────────────────
+  const floorLocs = (initial.warehouse?.locations || []).filter((l) => l.kind === 'Floor');
+  const floorBays = [...new Set(floorLocs.map((l) => l.bay))];
+  const laneHalf = FLOOR.size / 2 + 0.18;
+  floorLocs.forEach((l) => {
+    const z = floorLaneZ(l.bay, l.rack);
+    floorRect(FLOOR.x0 - laneHalf, FLOOR_X1 + laneHalf, z - laneHalf, z + laneHalf, 0x22324c, root, 0.035);
+    outline(FLOOR.x0 - laneHalf, FLOOR_X1 + laneHalf, z - laneHalf, z + laneHalf, 0xd4a017, root, 0.045, 0.45);
+  });
+  floorBays.forEach((bay) => {
+    const lanes = floorLocs.filter((l) => l.bay === bay).map((l) => floorLaneZ(bay, l.rack));
+    const pick = floorRect(FLOOR.x0 - laneHalf, FLOOR_X1 + laneHalf, Math.min(...lanes) - laneHalf, Math.max(...lanes) + laneHalf,
+      0x000000, root, 0.05, 0.0);
+    pick.userData = { kind: 'floor', bay, dock: `D${bay}` };
+    pickables.push(pick);
+  });
+  const floorCap = Math.max(1, floorLocs.reduce((a, l) => a + (l.capacity || 0), 0));
+  const floorMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(FLOOR.size, FLOOR.tierH - 0.13, FLOOR.size), M.kraft, floorCap);
+  floorMesh.castShadow = true;
+  floorMesh.receiveShadow = true;
+  floorMesh.count = 0;
+  root.add(floorMesh);
+  const floorBase = new THREE.InstancedMesh(new THREE.BoxGeometry(FLOOR.size + 0.06, 0.12, FLOOR.size + 0.06), M.pallet, floorCap);
+  floorBase.count = 0;
+  root.add(floorBase);
+  const floorChip = label('', 'tw-chip tw-chip-lg');
+  if (floorBays.length) {
+    floorChip.position.set((FLOOR.x0 + FLOOR_X1) / 2, 0.4, Math.min(...floorLocs.map((l) => floorLaneZ(l.bay, l.rack))) - 1.9);
+    root.add(floorChip);
+  }
+
   // ── docks & receiving ──────────────────────────────────────────────
   const dockObjs = {};
   Object.entries(DOCK_Z).forEach(([d, z]) => {
@@ -576,9 +622,18 @@ export function createFacilityScene(container, initial, callbacks = {}) {
     return [{ x: exitX(from), z: aisle }, { x: exitX(to), z: aisle }, to];
   }
 
+  // ── loss-prevention case markers (Security layer) ─────────────────
+  const loss = createLossLayer(root, pickables, { onSelect: (id) => callbacks.onSelectLoss?.(id) });
+  // line id / name / code → line index, for cases tied to a line
+  const lineIndexOf = (d) => {
+    const out = {};
+    (d.lines || []).forEach((ln, i) => { out[ln.id] = i; out[ln.name] = i; out[ln.code] = i; });
+    return out;
+  };
+
   // ── state ──────────────────────────────────────────────────────────
   let data = initial;
-  let layers = { workers: true, flow: true, labels: true, counts: true, readers: true, heat: false };
+  let layers = { workers: true, flow: true, labels: true, counts: true, readers: true, heat: false, security: true };
   let selected = null;
   let stageFocus = null;
   let flowSpeed = {};
@@ -648,13 +703,32 @@ export function createFacilityScene(container, initial, callbacks = {}) {
         palletBase.setMatrixAt(n, tmpM);
         n += 1;
       });
-      const cap = 48;
-      rackChips[zone].element.innerHTML = `<i>Zone ${zone}</i>${slots.length}/${cap}`;
+      const zs = d.warehouse.zone_stock?.[zone];
+      rackChips[zone].element.innerHTML = `<i>Zone ${zone}</i>${zs ? zs.pallets : slots.length}/${zs ? zs.capacity : 48}`;
     });
     palletMesh.count = n;
     palletBase.count = n;
     palletMesh.instanceMatrix.needsUpdate = true;
     palletBase.instanceMatrix.needsUpdate = true;
+    // zone D floor lanes: every stored pallet, stacked along its lane toward the dock
+    let nf = 0;
+    (d.warehouse.locations || []).forEach((l) => {
+      if (l.kind !== 'Floor') return;
+      for (let i = 0; i < l.pallets && nf < floorCap; i += 1) {
+        const p = floorSlot(l.bay, l.rack, i);
+        tmpM.compose(tmpP.set(p.x, p.y + 0.12 + (FLOOR.tierH - 0.13) / 2, p.z), tmpQ.identity(), tmpS.set(1, 1, 1));
+        floorMesh.setMatrixAt(nf, tmpM);
+        tmpM.compose(tmpP.set(p.x, p.y + 0.06, p.z), tmpQ.identity(), tmpS.set(1, 1, 1));
+        floorBase.setMatrixAt(nf, tmpM);
+        nf += 1;
+      }
+    });
+    floorMesh.count = nf;
+    floorBase.count = nf;
+    floorMesh.instanceMatrix.needsUpdate = true;
+    floorBase.instanceMatrix.needsUpdate = true;
+    const zd = d.warehouse.zone_stock?.D;
+    floorChip.element.innerHTML = `<i>Zone D floor</i>${zd ? zd.pallets : nf}/${zd ? zd.capacity : floorCap}`;
     // docks
     let staged = 0;
     d.docks.forEach((dk) => {
@@ -733,6 +807,8 @@ export function createFacilityScene(container, initial, callbacks = {}) {
     });
     workers.forEach((o, id) => { if (!seen.has(id)) { o.group.visible = false; o.pos = null; } });
     applyWorkerTargets();
+    // loss-prevention cases (updated in place)
+    loss.set(d.loss || [], lineIndexOf(d));
     applyFocus();
   }
 
@@ -762,6 +838,10 @@ export function createFacilityScene(container, initial, callbacks = {}) {
 
   function applyFocus() {
     const focusRoles = stageFocus ? STAGE_ROLES[stageFocus] || [] : null;
+    // the people the flow strip counts at this step (each person belongs to one step); fibre prep has no crew
+    // of its own and highlights the fillers who tend it
+    const crewIds = stageFocus ? (data.flow || []).find((s) => s.key === stageFocus)?.crew : null;
+    const crew = crewIds && crewIds.length ? new Set(crewIds) : null;
     lineObjs.forEach((o) => {
       const isSel = selected === o.id;
       o.sel.material.opacity = isSel ? 0.16 : 0;
@@ -774,15 +854,35 @@ export function createFacilityScene(container, initial, callbacks = {}) {
     });
     workers.forEach((o) => {
       if (!o.pos) return;
-      const dim = focusRoles && !focusRoles.includes(o.w.role);
+      const dim = focusRoles && (crew ? !crew.has(o.w.id) : !focusRoles.includes(o.w.role));
       o.group.visible = layers.workers;
       o.group.scale.setScalar(dim ? 0.6 : focusRoles ? 1.25 : 1);
     });
     packChips.forEach((c) => { c.visible = layers.labels && layers.counts; });
     Object.values(rackChips).forEach((c) => { c.visible = layers.labels; });
+    floorChip.visible = layers.labels;
     staticLabels.forEach((l) => { l.visible = layers.labels; });
     readers.visible = layers.readers;
     rawChip.visible = layers.labels && layers.counts;
+    loss.setVisible(layers.security);
+  }
+
+  /** Centre the view on a floor point (top view zooms in a little; 3D keeps the camera angle). */
+  function focusPoint(x, z) {
+    if (!controls) return;
+    if (view === 'top') {
+      controls.target.set(x, 0, z);
+      ortho.position.set(x, 300, z + 0.01);
+      if (ortho.zoom < 2.2) ortho.zoom = 2.2;
+      ortho.updateProjectionMatrix();
+    } else {
+      const off = camera.position.clone().sub(controls.target);
+      if (off.length() > 120) off.setLength(120);
+      controls.target.set(x, 0, z);
+      camera.position.set(x, 0, z).add(off);
+    }
+    controls.update();
+    onZoomChange();
   }
 
   function zoomLevel() {
@@ -867,6 +967,7 @@ export function createFacilityScene(container, initial, callbacks = {}) {
     }
     // beacons blink
     lineObjs.forEach((o) => { if (o.beacon.visible) o.beacon.material.emissiveIntensity = 0.6 + Math.abs(Math.sin(elapsed * 5)) * 1.4; });
+    loss.tick(elapsed);
     // roaming roles re-target periodically
     retarget += dt;
     if (retarget > 3.5) { retarget = 0; applyWorkerTargets(); }
@@ -888,7 +989,8 @@ export function createFacilityScene(container, initial, callbacks = {}) {
       while (o) { if (o.visible === false) return false; o = o.parent; }
       return true;
     });
-    const w = hits.find((h) => h.object.userData.kind === 'worker');
+    // loss markers and people win over the floor objects behind them
+    const w = hits.find((h) => h.object.userData.kind === 'loss') || hits.find((h) => h.object.userData.kind === 'worker');
     return (w || hits[0])?.object.userData || null;
   }
   function onMove(ev) {
@@ -900,6 +1002,8 @@ export function createFacilityScene(container, initial, callbacks = {}) {
     if (u.kind === 'worker') info.worker = data.workers.find((w) => w.id === u.id);
     if (u.kind === 'line') info.line = data.lines.find((ln) => ln.id === u.id);
     if (u.kind === 'dock') info.dock = data.docks.find((d) => d.dock === u.dock);
+    if (u.kind === 'floor') info.lanes = (data.warehouse.locations || []).filter((l) => l.kind === 'Floor' && l.bay === u.bay);
+    if (u.kind === 'loss') info.loss = loss.caseOf(u.id);
     callbacks.onHover?.(info, ev.clientX - r.left, ev.clientY - r.top);
   }
   function onDown(ev) { downAt = { x: ev.clientX, y: ev.clientY }; }
@@ -907,7 +1011,8 @@ export function createFacilityScene(container, initial, callbacks = {}) {
     if (!downAt || Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 5) return;
     const u = hit(ev);
     if (!u) { callbacks.onSelectLine?.(null); return; }
-    if (u.kind === 'worker') callbacks.onSelectWorker?.(u.id);
+    if (u.kind === 'loss') callbacks.onSelectLoss?.(u.id);
+    else if (u.kind === 'worker') callbacks.onSelectWorker?.(u.id);
     else if (u.kind === 'line') callbacks.onSelectLine?.(u.id, u.station);
     else callbacks.onSelectArea?.(u);
   }
@@ -964,8 +1069,16 @@ export function createFacilityScene(container, initial, callbacks = {}) {
       }
     },
     focusStage: (k) => { stageFocus = k; applyFocus(); },
+    setLoss: (cases) => loss.set(cases || [], lineIndexOf(data)),
+    selectLoss: (id) => loss.select(id),
+    focusLoss: (id) => {
+      loss.select(id);
+      const p = loss.positionOf(id);
+      if (p) focusPoint(p.x, p.z);
+    },
     dispose: () => {
       cancelAnimationFrame(raf);
+      loss.dispose();
       ro.disconnect();
       renderer.domElement.removeEventListener('pointermove', onMove);
       renderer.domElement.removeEventListener('pointerdown', onDown);

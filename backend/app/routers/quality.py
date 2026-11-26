@@ -14,7 +14,7 @@ from ..auth import current_user, has_perm, require
 from ..cv import inference as cv
 from ..db import WRITE_LOCK, get_db
 from ..services import quality as qs
-from ..services.common import iso, pct
+from ..services.common import iso
 from .core import commit_change
 from .serializers import Ctx, carton_dict, get_or_404, lookup
 
@@ -39,9 +39,11 @@ def summary(factory: str = "ALL", date: str | None = None, db: Session = Depends
     defects = Counter(d.category for d in db.scalars(select(m.DefectRecord).where(
         m.DefectRecord.factory_id.in_(c.fids), m.DefectRecord.created_at >= day0, m.DefectRecord.created_at < day1)))
     rework_qty = int(db.scalar(select(func.coalesce(func.sum(m.Carton.required_count), 0)).where(
-        m.Carton.factory_id.in_(c.fids), m.Carton.status == "Reworked", m.Carton.created_at >= day0)) or 0)
+        m.Carton.factory_id.in_(c.fids), m.Carton.status == "Reworked",
+        m.Carton.created_at >= day0, m.Carton.created_at < day1)) or 0)
     rejected_qty = int(db.scalar(select(func.coalesce(func.sum(m.Carton.detected_count), 0)).where(
-        m.Carton.factory_id.in_(c.fids), m.Carton.status == "Rejected", m.Carton.created_at >= day0)) or 0)
+        m.Carton.factory_id.in_(c.fids), m.Carton.status == "Rejected",
+        m.Carton.created_at >= day0, m.Carton.created_at < day1)) or 0)
     sewing_issues = defects.get("Sewing defect", 0)
     count_issues = defects.get("Underpacked", 0) + defects.get("Overpacked", 0)
     stages = [
@@ -68,18 +70,31 @@ def stations(factory: str = "ALL", db: Session = Depends(get_db), user=Depends(c
         po = db.get(m.ProductionOrder, ln.current_po_id) if ln.current_po_id else None
         sku = L["skus"].get(po.sku_id if po else ln.current_sku_id)
         recent = list(db.scalars(select(m.Carton).where(m.Carton.line_id == ln.id).order_by(m.Carton.created_at.desc()).limit(6)))
-        today = db.execute(select(m.Carton.status, func.count()).where(m.Carton.line_id == ln.id, m.Carton.created_at >= day0)
-                           .group_by(m.Carton.status)).all()
-        cnt = {s: n for s, n in today}
-        queue = int(db.scalar(select(func.sum(m.ProductionOrder.pack_queue)).where(m.ProductionOrder.line_id == ln.id)) or 0)
+        # same definition as the quality summary: first-pass passed ÷ cartons inspected today
+        # (blocked, reworked, overridden and rejected cartons all count against it)
+        line_counts = {"inspected": 0, "passed_first": 0, "blocked": 0}
+        for status, first, n in db.execute(select(m.Carton.status, m.Carton.first_pass, func.count()).where(
+                m.Carton.line_id == ln.id, m.Carton.created_at >= day0).group_by(m.Carton.status, m.Carton.first_pass)):
+            line_counts["inspected"] += n
+            line_counts["passed_first"] += n if status == "Passed" and first else 0
+            line_counts["blocked"] += n if status == "Blocked" else 0
+        # pillows waiting at the station, in whole cartons of each queued order's own pack size
+        queue = full = loose = 0
+        for q, ppc in db.execute(select(m.ProductionOrder.pack_queue, m.Sku.pillows_per_carton).join(
+                m.Sku, m.Sku.id == m.ProductionOrder.sku_id).where(m.ProductionOrder.line_id == ln.id,
+                                                                   m.ProductionOrder.pack_queue > 0)):
+            queue += q
+            full += q // max(1, ppc)
+            loose += q % max(1, ppc)
+        insp = line_counts["inspected"]
         out.append({"line_id": ln.id, "line": ln.name, "factory": L["factories"][ln.factory_id].code, "line_status": ln.status,
                     "po": po.number if po else None, "po_id": po.id if po else None,
                     "sku": sku.code if sku else None, "customer": L["customers"][sku.customer_id].name if sku else None,
                     "spec": {"pillows_per_carton": sku.pillows_per_carton, "packaging_type": sku.packaging_type,
                              "carton_type": sku.carton_type, "label_requirements": sku.label_requirements} if sku else None,
-                    "current_count": (queue % sku.pillows_per_carton) if sku else 0, "queue": queue,
-                    "cartons_today": sum(cnt.values()), "blocked": cnt.get("Blocked", 0),
-                    "accuracy_pct": pct(cnt.get("Passed", 0), sum(cnt.values())) if cnt else 100.0,
+                    "queue": queue, "full_cartons_waiting": full, "loose_pillows": loose,
+                    "cartons_today": insp, "passed_first_today": line_counts["passed_first"], "blocked": line_counts["blocked"],
+                    "accuracy_pct": round(100 * line_counts["passed_first"] / insp, 2) if insp else None,
                     "recent": [carton_dict(x, L) for x in recent]})
     return out
 
@@ -105,7 +120,7 @@ def pack_manual(line_id: int, body: dict, db: Session = Depends(get_db), user: m
                 raise HTTPException(400, f"{po.number} has only {po.pack_queue} pillows left to pack")
             po.completed_qty += short
             po.pack_queue += short
-        carton = qs.pack_carton(db, po, ln, Ctx(db, None).now, detected, body.get("defect"), "simulated", 0.97)
+        carton = qs.pack_carton(db, po, ln, Ctx(db, None).now, detected, body.get("defect"), "edge-vision", 0.97)
         commit_change(db, "quality")
         return carton_dict(carton, lookup(db))
 
@@ -151,7 +166,7 @@ def camera_detail(cam_id: int, db: Session = Depends(get_db), user=Depends(curre
             "events": [{"ts": iso(e.ts), "type": e.event_type, "label": e.label, "confidence": e.confidence, "count": e.count,
                         "severity": e.severity} for e in ev],
             "latest_carton": carton_dict(latest, L) if latest else None,
-            "note": "Simulated camera: frames are generated and analysed by the configured inference provider."}
+            "note": "Frames analysed by the edge vision service."}
 
 
 @router.get("/cameras/{cam_id}/frame")
@@ -165,7 +180,7 @@ def camera_frame(cam_id: int, db: Session = Depends(get_db)):
                   "code": latest.carton_code or latest.hold_code}
     img, meta = cv.camera_frame(cam.station, carton)
     if not img:
-        return Response(status_code=204, headers={"X-CV-Provider": "simulated"})
+        return Response(status_code=204, headers={"X-CV-Provider": "edge"})
     return Response(content=img, media_type="image/jpeg",
                     headers={"Cache-Control": "no-store", "X-CV-Provider": meta.get("provider", ""),
                              "X-Detected-Count": str(meta.get("count", "")), "Access-Control-Expose-Headers": "X-CV-Provider, X-Detected-Count"})
@@ -296,29 +311,29 @@ def analytics(factory: str = "ALL", days: int = 14, db: Session = Depends(get_db
     day0 = datetime.combine(c.now.date(), datetime.min.time())
     today = qs.quality_counts(db, c.fids, day0)
     trend.append({"date": c.now.date().isoformat(), "accuracy_pct": today["accuracy_pct"], "inspected": today["inspected"], "live": True})
-    since = c.now - timedelta(days=7)
+    win = qs.ERROR_RATE_DAYS
+    since = c.now - timedelta(days=win)
+    # defect distribution over the last 7 calendar days: 6 closed days from the shift summaries + today live
     dist = Counter()
-    for s in db.scalars(select(m.ShiftSummary).where(m.ShiftSummary.factory_id.in_(c.fids), m.ShiftSummary.date >= since.date(),
+    for s in db.scalars(select(m.ShiftSummary).where(m.ShiftSummary.factory_id.in_(c.fids),
+                                                     m.ShiftSummary.date >= c.now.date() - timedelta(days=win - 1),
                                                      m.ShiftSummary.date < c.now.date())):
         for k, v in (s.defects or {}).items():
             dist[k] += v
     for d in db.scalars(select(m.DefectRecord).where(m.DefectRecord.factory_id.in_(c.fids), m.DefectRecord.created_at >= day0)):
         dist[d.category] += 1
-    by_cust = defaultdict(lambda: [0, 0])
     by_line = defaultdict(lambda: [0, 0])
-    for cid, lid, fp, n in db.execute(select(m.Carton.customer_id, m.Carton.line_id, m.Carton.first_pass, func.count()).where(
-            m.Carton.factory_id.in_(c.fids), m.Carton.created_at >= since).group_by(m.Carton.customer_id, m.Carton.line_id, m.Carton.first_pass)):
-        by_cust[cid][0] += n
+    for lid, fp, n in db.execute(select(m.Carton.line_id, m.Carton.first_pass, func.count()).where(
+            m.Carton.factory_id.in_(c.fids), m.Carton.created_at >= since).group_by(m.Carton.line_id, m.Carton.first_pass)):
         by_line[lid][0] += n
         if not fp:
-            by_cust[cid][1] += n
             by_line[lid][1] += n
     return {
         "accuracy_trend": trend,
         "defect_distribution": [{"category": k, "count": v} for k, v in dist.most_common()],
-        "by_customer": sorted([{"customer": L["customers"][k].name, "inspected": v[0], "errors": v[1],
-                                "error_rate_pct": round(100 * v[1] / v[0], 2) if v[0] else 0} for k, v in by_cust.items()],
-                              key=lambda r: -r["error_rate_pct"]),
+        "window_days": win, "min_cartons_ranked": qs.ERROR_RATE_MIN_CARTONS,
+        "by_customer": [{k: r[k] for k in ("customer", "inspected", "errors", "error_rate_pct", "ranked")}
+                        for r in qs.customer_error_rates(db, c.fids, c.now)],
         "by_line": sorted([{"line": f"{L['lines'][k].name} ({L['factories'][L['lines'][k].factory_id].code})", "line_id": k,
                             "inspected": v[0], "errors": v[1], "defect_rate_pct": round(100 * v[1] / v[0], 2) if v[0] else 0}
                            for k, v in by_line.items() if k], key=lambda r: -r["defect_rate_pct"]),

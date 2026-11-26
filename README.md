@@ -50,10 +50,11 @@ The login screen lists them; click one to sign in.
 | **Executive Overview** | 10 calculated KPIs with drill-downs (output vs target, efficiency vs previous shift, OEE = A×P×Q, downtime by cause, workforce utilization, labour cost per pillow incl. shift-2 differential, packaging accuracy, inventory availability, shipment readiness, potential detention). Also: the **Digital Twin** entry (live US network map), **S!AP advisories**, hourly actual vs target, factory comparison, lifecycle stage health, and a ranked *Requires Attention* list that links to the affected record. |
 | **Procurement & Inbound** | Purchase orders (create/update), inbound shipments (Scheduled → In Transit → Arrived → Receiving → Received/Discrepancy), and goods receipt with scan simulation. A goods receipt records shortages and damage separately and updates stock only when confirmed. Also: material days-of-cover, supplier performance, and AI reorder and expedite recommendations. |
 | **Production & Manufacturing** | Process pipeline (Raw Material Prep → Mixing → Flapper → Bun Formation → Filling → Sewing → Transfer) with live bottleneck detection. Also: a 3D **digital twin** of the pillow plant with every stage highlighted, CCTV with vision analytics, 8 lines per plant, production orders, hourly monitoring, machine health (0–100 score, anomaly detection, maintenance prediction, work orders), **predictive maintenance** analytics, workforce productivity and labour cost, changeovers (3-min standard), and the **Optimize Production Plan** scheduler with before/after comparison and accept/reject. |
-| **Quality & Packaging** | Packaging workflow; packing stations that read the SKU spec, count pillows and block wrong counts until rework or a supervisor override with a reason. Also: simulated cameras (OpenCV counting on generated frames, labelled SIMULATED), defect history and quality analytics. |
+| **Quality & Packaging** | Packaging workflow; packing stations that read the SKU spec, count pillows and block wrong counts until rework or a supervisor override with a reason. Also: the station cameras with edge vision (CCTV feeds), defect history and quality analytics. The station card is read-only: cartons come from the line. |
 | **Warehouse & Inventory** | Zone/bay/rack/level layout with occupancy, finished-goods receiving by carton/pallet scan, and put-away (failed cartons are refused). Also: allocation with shortages linked to production orders, picking, and workload/workforce planning. |
 | **Dispatch & Delivery** | Order readiness (production → quality → inventory → allocation → picking), truck and dock scheduling with conflict prevention, shipment risk prediction with actions (prioritize, reallocate, expedite picking, reschedule truck), detention monitoring, and loading, departure and delivery confirmation. |
 | **Predictive Maintenance** | Reliability view of every production machine (fibre openers, flapper units, Garnett and blow-line motors, filling heads; 96 across the three plants). *Failure prediction & plan*: machines at risk, expected failures, pillows at risk and avoidable loss, a risk matrix (7-day failure probability vs pillows lost), remaining useful life with P10–P90 bands, a 14-day failure forecast, MTBF/MTTR, the recommended maintenance plan with one-click scheduling, fill-weight drift, energy anomalies, spare-parts demand and technician workload. *Machine health & work orders*: health scores, telemetry vs baseline, anomaly detection and work orders per machine. The same views are also tabs on the Production page. |
+| **Loss Prevention** | Material pilferage from receiving to the dock. *Case queue*: every signal is a case with evidence, value at standard cost, an owner and a handling playbook, closed with an outcome (confirmed loss, recovered, process error, false alarm). *Patterns & hotspots*: cases per day, confirmed loss, outcomes, cases by signal and zone, and S!AP advisories for repeat signals. *Detection & playbooks*: the controls in place, each signal's checks and owner, and the CCTV cameras with badge-only zones. Each stage page has its own loss tab (Procurement, Production, Quality, Warehouse, Dispatch). |
 | **AI Command Center** | Natural-language questions answered by data tools over the same database, with charts, tables, recommended actions and links to records. Uses Claude when configured; otherwise a local engine answers from the same tools. |
 
 ## Digital twin
@@ -86,14 +87,46 @@ Plant-floor footage (four phone clips from a pillow plant) is turned into 20 CCT
 
 The footage is recorded, not live; the overlays are real model output on that footage. Customer mappings for the carton labels are configurable in `tools/cctv/feeds.py`.
 
+## Loss prevention (pilferage)
+Material pilferage is handled as cases, not as accusations. `services/loss.py` raises cases from eight signals, each tied to real records in the simulation:
+
+| Signal | Detected by | Example |
+|---|---|---|
+| FG cycle-count shortage | 2-person blind count | Rack slot short 2 cartons vs the system; the last move scan and CCTV of the aisle are checked |
+| Exit-gate RFID read | Staff exit gate reader | A Walmart carton tag (RFID label) read at the staff gate at shift end |
+| After-hours store access | Material-store door reader | A line-role badge opens the material store after the 22:30 auto-lock |
+| Consumption variance | Material issues vs BOM × output | A line used more fibre than its output and check-weighed fill explain |
+| Receiving shortage | Count + seal check + weighbridge | Inbound pallets short, seal number differs from the BOL |
+| Dispatch count mismatch | Dock-door counter + weighbridge | More cartons loaded than on the manifest; the truck is held |
+| Scrap reconciliation | QA reject log vs scrap weigh-out | Rejects logged but not weighed out of the scrap cage |
+| CCTV no-badge entry | Vision + RFID zone reader | Someone enters a badge-only aisle without an RFID read |
+
+* **Handling.** Each case carries evidence, its value at standard cost, an owner, a playbook of checks (recount, footage, logs, seals, weighbridge) and an outcome. Plant Managers and Administrators (`security.write`) can assign, record checks, add notes, close with an outcome (a confirmed loss needs a note; a recovery records the quantity recovered) and reopen. The engine also raises new cases while the clock runs and works cases nobody has touched.
+* **Where it appears.** The **Loss Prevention** page; a loss tab on each stage page; critical cases in the alert bell and the sidebar badge; S!AP advisories for repeat signals and hotspots; the facility and production twins (markers at the zone or stage); the AI Command Center ("Are there any pilferage cases open right now?").
+* **CCTV.** Badge-only zones are drawn on the finished-goods aisle and staging cameras (`tools/cctv/feeds.py`, `analyze.py --lp`). An entry without an RFID read shows *NO BADGE READ · VERIFY* on the video, a red marker on the timeline, and a loss-prevention panel in the viewer with *Jump to event* and *Open case*. Tiles with active cases carry an **LP** badge. Vision never names or accuses the person on camera: security checks the badge logs and the shift roster, and the clip is kept as evidence.
+
+Cases, reads, counts and weights are simulated.
+
 ## Cross-stage behaviour
 * **Material shortage.** A delayed shipment lowers days of cover and raises a procurement alert. Production orders get a projected stock-out window and later completion estimates, at-risk shipments appear in Dispatch, and management gets one consolidated alert. Lines stop when stock runs out and restart after a goods receipt.
 * **Machine breakdown.** Health drops to Critical, the line stops and a corrective work order opens. Completion estimates for the line's orders move out, and shipment readiness and risk are recalculated. If nobody intervenes, a degrading machine (e.g. M-102) can fail on its own.
 * **Packaging mismatch.** The carton is blocked and gets a HOLD id, no carton id. A defect record is created and the carton cannot be put away. Readiness waits for rework, override or rejection; rejected pillows go back to production.
 * **Warehouse delay.** Picking falls behind, the waiting truck accrues waiting time and the estimated detention charge, and the system recommends expediting picking or rescheduling.
 
-## Simulation
-Administrators use the **Sim** control in the header to start, pause, step, reset, change speed (1/5/15/30 simulated minutes per 3-second tick), and trigger scenarios: machine failure, production delay, material shortage, packaging mismatch, workforce productivity decline and truck delay. Scenarios target the factory selected in the header.
+## Simulation engine
+The data comes from a simulation engine that runs in the background; the application itself has no simulation controls and no "simulated" labels.
+
+* **Real-time clock.** With `SIM_REALTIME=true` (the default) the plant clock follows the server's wall clock: lines run 06:00–23:00 local time, and overnight the clock waits for the next morning instead of jumping ahead. A fresh database is seeded up to the current time of day. Set `SIM_REALTIME=false` to run at `SIM_DEFAULT_SPEED` simulated minutes per tick instead.
+* **Operations API.** `POST /api/sim/{start|pause|step|speed|reset}` and `POST /api/sim/scenario/run` (machine failure, production delay, material shortage, packaging mismatch, workforce productivity decline, truck delay) remain for administrators and the test suite. They are hidden from the published API schema and have no UI.
+
+**Order-to-truck flow.** The rules the numbers follow:
+
+* **Demand and promise dates.** New orders arrive at about 72 % of each plant's rated line capacity, only for SKUs that plant makes (it stocks their fill and shell). The ship date is quoted from the real line queues: the order goes to the line that can finish it first, and the promised slot leaves time for packing, inspection, put-away and picking, plus 12 h of slack.
+* **Make-to-order stock belongs to its order.** A pallet is reserved for its own order as soon as it is put away. Free stock (make-to-stock, surplus) goes to orders shipping within 72 h, earliest first, and is never taken from another open order's production. Whatever free stock covers is netted off the order's open production order, so the lines don't make it twice.
+* **Shortfalls get a top-up.** If an order is still short after its production is finished (rejected cartons, a confirmed loss) and no stock covers it, a top-up production order is queued first on a line, so the order always has a real ready time.
+* **Picking and readiness.** Orders are picked to the staging lane up to 24 h before their truck. "Ready for dispatch" counts orders shipping in that window that are picked and staged; the rest are *on track* (projected ready before the truck) or *at risk*. A loading or loaded truck is never at risk.
+* **The last pallet closes.** When a production order finishes, its last partial pallet closes even if a pillow or two short of a carton is left over (those return to rework).
+* **Released trucks.** A truck that has waited 6 h is released and the order is rebooked at its projected ready time. Detention reasons are grouped by cause, and released trucks are reported separately from today's trucks.
 
 The demo day starts at 11:00. Production between 06:00 and 11:00 has already been run by the engine, so today's history is consistent. Shift rules: 8.5 h scheduled presence, 30-min unpaid lunch, two paid 10-min breaks, and +$1/h on shift 2. Non-production hours (23:00–06:00) are skipped.
 
@@ -127,13 +160,14 @@ LLM_PROVIDER=anthropic   ANTHROPIC_API_KEY=...   LLM_MODEL=claude-opus-5-5
 With `anthropic`, Claude chooses among 18 data tools (`backend/app/ai/tools.py`) and answers only from their results. Server-side refusal fallback is enabled. If the API is unavailable, the local engine answers instead and says so. The default is `mock`, the local engine, which needs no network.
 
 ## Tests
-`backend/tests/` holds 26 tests:
+`backend/tests/` holds 31 tests:
 
 * `test_acceptance.py` runs the eight acceptance scenarios end to end through the REST API, plus a smoke test of every page endpoint and a live-speed (1-minute tick) packing check.
 * `test_llm_provider.py` exercises the Claude tool loop and its fallback with a scripted client, so it makes no network calls.
 * `test_predictive.py` covers the S!AP contract, the M-102 bearing prediction and scheduling.
 * `test_twin.py` covers the network map, pillow-flow invariants (filled ≥ sewn ≥ bagged = line output), breaks never counted as time away, and technician dispatch to a breakdown.
 * `test_cctv.py` checks that every CV camera has a feed, that the Walmart packing feed reads its label by OCR and resolves the customer's order and the packers' RFID badges, and that the published video, poster and analytics match the catalogue (frame counts, placements on packing cameras).
+* `test_loss.py` covers the loss-prevention baseline (every signal, all plants, several outcomes), the overview and case detail, the handling workflow and its permissions, cases surfacing in alerts, advisories, insights, the twin and the AI chat, and the engine raising and working cases.
 * `test_numbering.py` guards order numbering against collisions with seeded records.
 
 The suite passes on SQLite and on PostgreSQL (`PG_TEST_URL`). Set `TEST_DB_PATH` to run two suites side by side. The acceptance scenarios:

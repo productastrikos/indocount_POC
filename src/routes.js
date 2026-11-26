@@ -12,6 +12,7 @@ import Warehouse from './pages/Warehouse';
 import Dispatch from './pages/Dispatch';
 import CommandCenter from './pages/CommandCenter';
 import Maintenance from './pages/Maintenance';
+import LossPrevention from './pages/LossPrevention';
 
 export const NAV_SECTIONS = [
   {
@@ -29,6 +30,7 @@ export const NAV_SECTIONS = [
     label: 'Intelligence',
     items: [
       { path: '/maintenance', label: 'Predictive Maintenance', short: 'Maintenance', icon: 'wrench', stage: 'production', element: <Maintenance />, filters: [] },
+      { path: '/loss-prevention', label: 'Loss Prevention', short: 'Loss', icon: 'shield', stage: 'loss-prevention', element: <LossPrevention />, filters: [] },
       { path: '/ai', label: 'AI Command Center', short: 'AI', icon: 'sparkles', stage: 'ai', element: <CommandCenter />, filters: [] },
     ],
   },

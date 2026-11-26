@@ -10,14 +10,16 @@
      focusStage(key|null)        glow + outline one stage on every line, dim the rest, fly there
      setLayers({roof, markers, flow, labels})
      setToken(stageKey|null, progress 0..1, lineIndex)   walkthrough pillow
+     setIncidents(cases)         loss-prevention beacons: one per stage with open cases (facility.loss)
      dispose()
-   callbacks: onSelectStage(key), onOpenLine(id), onOpenMachine(id), onHover(info|null, x, y) */
+   callbacks: onSelectStage(key), onOpenLine(id), onOpenMachine(id), onOpenLoss(caseId), onHover(info|null, x, y) */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { STAGES, SUPPORT, STAGE_BY_KEY, MACHINE_STAGE } from './stages';
+import { SEVERITY_COLOR } from '../../../components/loss/lossShared';
+import { STAGES, SUPPORT, STAGE_BY_KEY, MACHINE_STAGE, SEV_RANK, lossStage } from './stages';
 
 export const HALL = { x0: -134, x1: 130, z0: -66, z1: 62, h: 13 };
 export const lineZ = (i) => -40 + i * 11;
@@ -42,6 +44,9 @@ const PRESETS = {
 };
 
 const fmt = (n) => (n == null ? '—' : Math.round(n).toLocaleString('en-US'));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+const LINE_KEYS = ['opening', 'carding', 'filling', 'sewing', 'bagging', 'packing'];
+const INC_H = 12;   // loss-prevention beacon height
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 20);
 const CONE = new THREE.ConeGeometry(0.5, 1, 20);
@@ -832,6 +837,111 @@ export function createPlantScene(container, initial, cb = {}, opts = {}) {
   const layers = { roof: true, markers: true, flow: true, labels: true };
   const lineIdx = Object.fromEntries(lineObjs.map((lo, i) => [lo.id, i]));
 
+  // ── loss-prevention beacons: one per stage with open cases ─────────
+  const incidents = new THREE.Group();
+  scene.add(incidents);
+  const incGeo = {
+    pole: new THREE.CylinderGeometry(0.14, 0.14, INC_H, 8),
+    lamp: new THREE.CylinderGeometry(0.9, 0.9, 1.5, 20),
+    cap: new THREE.SphereGeometry(0.9, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+    ring: new THREE.RingGeometry(2.4, 2.9, 40),
+    hit: new THREE.CylinderGeometry(2.6, 2.6, INC_H + 3, 10),
+  };
+  const incObjs = {};          // stage key → beacon
+  const pickIncidents = [];
+  /** Where a stage's beacon stands: beside the department marker, or at the spot of its most severe case. */
+  function incidentSpot(key, c) {
+    const [x0, x1, z0, z1] = STAGE_BY_KEY[key].region;
+    const isLine = LINE_KEYS.includes(key);
+    let x = (x0 + x1) / 2 + 3.5;
+    let z = (isLine ? -1.5 : (z0 + z1) / 2) + 3.5;
+    const ref = String(c?.area_ref || '').toUpperCase();
+    const li = c?.line_id != null ? lineIdx[c.line_id] : undefined;
+    if (isLine && li != null) { x = (x0 + x1) / 2; z = lineZ(li) + 2.6; }
+    if (c?.area === 'fg') {
+      const rk = ref.match(/([A-Z])(\d{1,2})-R(\d+)-L(\d+)$/);
+      const p = rk && slotPos[`${rk[1]}-${Number(rk[2])}-${Number(rk[3])}-${Number(rk[4])}`];
+      if (p) { x = p[0] + 6; z = p[2]; }                 // aisle beside that rack bay
+    }
+    if (c?.area === 'dock') {
+      const d = ref.match(/D(?:OCK)?\s*(\d)/);
+      if (d && DOCKS[`D${d[1]}`] != null) { x = 118; z = DOCKS[`D${d[1]}`]; }
+    }
+    if (c?.area === 'receiving') {
+      const r = ref.match(/R(\d)/);
+      if (r && RECV_DOORS[Number(r[1]) - 1] != null) { x = -122; z = RECV_DOORS[Number(r[1]) - 1]; }
+    }
+    if (c?.area === 'material_store') { x = -112; z = 47; }   // shells, labels and zips store
+    if (c?.area === 'gate') { x = 84; z = HALL.z1 - 6; }       // staff exit on the south side
+    return { x, z };
+  }
+  function makeIncident(key) {
+    const mats = {
+      pole: new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.75 }),
+      lamp: new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xef4444, emissiveIntensity: 1.6 }),
+      ring: new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
+    };
+    const g = new THREE.Group();
+    const pole = new THREE.Mesh(incGeo.pole, mats.pole);
+    pole.position.y = INC_H / 2;
+    const lamp = new THREE.Mesh(incGeo.lamp, mats.lamp);
+    lamp.position.y = INC_H + 0.75;
+    const cap = new THREE.Mesh(incGeo.cap, mats.lamp);
+    cap.position.y = INC_H + 1.5;
+    const ring = new THREE.Mesh(incGeo.ring, mats.ring);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.1;
+    const hb = new THREE.Mesh(incGeo.hit, hitMat);
+    hb.position.y = (INC_H + 3) / 2;
+    g.add(pole, lamp, cap, ring, hb);
+    pickIncidents.push(hb);
+    const lab = el('', 'ftw-loss', () => {
+      const o = incObjs[key];
+      if (!o) return;
+      cb.onSelectStage?.(key);
+      cb.onOpenLoss?.(o.topId);
+    });
+    lab.center.set(0.5, 1);
+    lab.position.y = INC_H + 3;
+    g.add(lab);
+    incidents.add(g);
+    return { g, mats, lamp, ring, hit: hb, lab, sig: '', topId: null, phase: (Object.keys(incObjs).length * 0.37) % 1 };
+  }
+  function removeIncident(key) {
+    const o = incObjs[key];
+    o.lab.removeFromParent();   // CSS2DObject drops its element on 'removed'
+    o.lab.element.remove();
+    incidents.remove(o.g);
+    pickIncidents.splice(pickIncidents.indexOf(o.hit), 1);
+    Object.values(o.mats).forEach((m) => m.dispose());
+    delete incObjs[key];
+  }
+  function setIncidents(list = []) {
+    const byStage = {};
+    list.forEach((c) => { const k = lossStage(c); if (STAGE_BY_KEY[k]) (byStage[k] ||= []).push(c); });
+    Object.keys(incObjs).forEach((k) => { if (!byStage[k]) removeIncident(k); });
+    Object.entries(byStage).forEach(([k, cs]) => {
+      cs.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9) || (b.value_usd || 0) - (a.value_usd || 0));
+      const top = cs[0];
+      const o = incObjs[k] || (incObjs[k] = makeIncident(k));
+      const p = incidentSpot(k, top);
+      o.g.position.set(p.x, 0, p.z);
+      o.topId = top.id;
+      o.hit.userData = { kind: 'loss', stage: k, id: top.id, ids: cs.map((c) => c.id) };
+      const sig = cs.map((c) => `${c.id}:${c.severity}:${c.ref}`).join(',');
+      if (o.sig === sig) return;
+      o.sig = sig;
+      const col = SEVERITY_COLOR[top.severity] || SEVERITY_COLOR.info;
+      Object.values(o.mats).forEach((m) => m.color.set(col));
+      o.mats.lamp.emissive.set(col);
+      o.lab.element.style.setProperty('--c', col);
+      // case ref and kind only: never a person's name next to a loss marker
+      o.lab.element.innerHTML = cs.length === 1
+        ? `<i></i><b>${esc(top.ref)}</b><span>${esc(top.kind_label || 'Loss case')}</span>`
+        : `<i></i><b>${cs.length} loss cases</b><span>${esc(top.ref)} +${cs.length - 1}</span>`;
+    });
+  }
+
   function update(d) {
     (d.lines || []).forEach((ln) => {
       const lo = lineObjs[lineIdx[ln.id]];
@@ -1044,6 +1154,14 @@ export function createPlantScene(container, initial, cb = {}, opts = {}) {
       o.sphere.position.y = o.y + Math.sin(t * 2 + o.phase) * 0.45;
       o.ring.rotation.z = t * 0.8;
     });
+    // loss-prevention beacons: rotating lamp + expanding floor ring
+    Object.values(incObjs).forEach((o) => {
+      const ph = (t * 0.8 + o.phase) % 1;
+      o.ring.scale.setScalar(1 + ph * 1.8);
+      o.mats.ring.opacity = 0.85 * (1 - ph);
+      o.mats.lamp.emissiveIntensity = 0.8 + Math.abs(Math.sin(t * 5 + o.phase * 6)) * 1.6;
+      o.lamp.rotation.y = t * 2;
+    });
     flowArrows.forEach((f) => {
       f.mm.opacity = 0.45 + 0.3 * Math.sin(t * 2 + f.k);
       f.dots.forEach((d, j) => {
@@ -1067,6 +1185,7 @@ export function createPlantScene(container, initial, cb = {}, opts = {}) {
   let lastDeclutter = -1;
   const labelPrio = (c) => {
     if (c.contains('ftw-token')) return 0;
+    if (c.contains('ftw-loss')) return 1;
     if (c.contains('ftw-marker')) {
       if (c.contains('is-active')) return 1;
       if (c.contains('is-support')) return 6;
@@ -1098,6 +1217,8 @@ export function createPlantScene(container, initial, cb = {}, opts = {}) {
     const r = renderer.domElement.getBoundingClientRect();
     mouse.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(mouse, camera);
+    const li = ray.intersectObjects(pickIncidents, false)[0];
+    if (li) return li.object.userData;
     const m = ray.intersectObjects(pickMachines, false)[0];
     if (m) return m.object.userData;
     const a = ray.intersectObjects(pickAreas, false)[0];
@@ -1124,7 +1245,8 @@ export function createPlantScene(container, initial, cb = {}, opts = {}) {
     const u = hit(ev);
     if (!u) return;
     cb.onSelectStage?.(u.stage);
-    if (u.kind === 'machine' && u.id) cb.onOpenMachine?.(u.id);
+    if (u.kind === 'loss') cb.onOpenLoss?.(u.id);
+    else if (u.kind === 'machine' && u.id) cb.onOpenMachine?.(u.id);
     else if (u.kind === 'line') cb.onOpenLine?.(u.lineId);
   };
   const onLeave = () => cb.onHover?.(null);
@@ -1149,6 +1271,8 @@ export function createPlantScene(container, initial, cb = {}, opts = {}) {
     renderer.domElement.removeEventListener('pointerup', onUp);
     renderer.domElement.removeEventListener('pointerleave', onLeave);
     controls.dispose();
+    Object.keys(incObjs).forEach(removeIncident);
+    Object.values(incGeo).forEach((g) => g.dispose());
     scene.traverse((o) => {
       if (o.geometry && ![BOX, CYL, CONE].includes(o.geometry)) o.geometry.dispose();
       const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -1160,7 +1284,7 @@ export function createPlantScene(container, initial, cb = {}, opts = {}) {
   }
 
   return {
-    update, setCamera, focusStage, setLayers, setToken, dispose,
+    update, setCamera, focusStage, setLayers, setToken, setIncidents, dispose,
     center: CENTER,
     stageView,
   };

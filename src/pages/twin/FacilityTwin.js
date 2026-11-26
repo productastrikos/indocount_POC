@@ -10,14 +10,19 @@ import { createFacilityScene } from './scene';
 import { ROLE_COLOR, STATE_COLOR } from './layout';
 import WorkerDrawer, { STATE_LABEL, stateColor } from './WorkerDrawer';
 import CctvWall from '../../components/cctv/CctvWall';
+import LossIncidentDrawer from '../../components/loss/LossIncidentDrawer';
+import { SEVERITY_COLOR, usd } from '../../components/loss/lossShared';
+import { LOSS_SEV_RANK } from './lossMarkers';
 
 const LAYERS = [
   ['workers', 'Workers', 'users'], ['flow', 'Pillow flow', 'route'], ['counts', 'Counts', 'grid'],
   ['labels', 'Labels', 'list'], ['readers', 'RFID readers', 'signal'], ['heat', 'Away heatmap', 'gauge'],
+  ['security', 'Security', 'shield'],
 ];
 const STAGE_ICON = { raw: 'truck', fibre: 'layers', filling: 'bolt', sewing: 'edit', bagging: 'box', packing: 'camera', qa: 'shield', pallet: 'grid', fg: 'box', dispatch: 'route' };
 const STAGE_SHORT = { raw: 'Receiving', fibre: 'Fibre prep', filling: 'Filling', sewing: 'Sewing', bagging: 'Bagging', packing: 'Carton pack', qa: 'QA hold', pallet: 'Palletizing', fg: 'FG racks', dispatch: 'Dispatch' };
-const STAGE_ROLE_LABEL = { raw: 'Forklift', fibre: 'Filling operator', filling: 'Filler', sewing: 'Sewers', bagging: 'Bagger', packing: 'Packers', qa: 'Supervisors', pallet: 'Forklift', fg: 'Warehouse', dispatch: 'Warehouse + forklift' };
+// each person is counted at one step only (the API assigns floor roles to one step each)
+const STAGE_ROLE_LABEL = { raw: 'Forklift', fibre: 'Filling operator', filling: 'Filler', sewing: 'Sewers', bagging: 'Bagger', packing: 'Packers', qa: 'Supervisors', pallet: 'Forklift', fg: 'Warehouse', dispatch: 'Pick & load' };
 
 function Stat({ label, value, sub, tone }) {
   return (
@@ -170,7 +175,7 @@ function PlantPanel({ data, onLine }) {
       <div className="grid grid-cols-3 gap-2 tile">
         <Stat label="Output today" value={num(totalOut)} sub={`target ${num(data.factory.daily_target)}`} />
         <Stat label="Packing" value={pct(data.packing.accuracy_pct, 1)} sub={`${num(data.packing.cartons_today)} cartons`} />
-        <Stat label="FG stock" value={compact(data.warehouse.total_pillows)} sub={`${data.warehouse.utilization_pct}% racks`} />
+        <Stat label="FG stock" value={compact(data.warehouse.total_pillows)} sub={`${num(data.warehouse.stored_pallets)} / ${num(data.warehouse.capacity_pallets)} pallet places`} />
       </div>
       <p className="label-caps">Lines · click to inspect</p>
       <div className="space-y-1">
@@ -300,13 +305,49 @@ function WorkforcePanel({ data, onWorker }) {
   );
 }
 
+/** Active loss-prevention cases at this plant. Rows show the case, never a person's name. */
+function LossPanel({ cases, plant, active, onOpen }) {
+  const navigate = useNavigate();
+  const list = [...cases].sort((a, b) => (LOSS_SEV_RANK[a.severity] ?? 3) - (LOSS_SEV_RANK[b.severity] ?? 3) || (b.value_usd || 0) - (a.value_usd || 0));
+  const crit = list.filter((c) => c.severity === 'critical').length;
+  const total = list.reduce((s, c) => s + (c.value_usd || 0), 0);
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2 tile">
+        <Stat label="Open cases" value={num(list.length)} sub={`${list.filter((c) => c.status === 'Investigating').length} investigating`} />
+        <Stat label="Critical" value={num(crit)} tone={crit ? 'danger' : undefined} />
+        <Stat label="Value at risk" value={usd(total)} sub="at standard cost" />
+      </div>
+      <p className="text-[11px] text-fg-muted">Material-pilferage signals at {plant}: count shortages, gate reads, after-hours access, consumption and load variances. Click a case to open it and find its beacon on the floor.</p>
+      {list.length === 0 && <Empty>No open loss-prevention cases at this plant.</Empty>}
+      <div className="-mx-1">
+        {list.map((c) => (
+          <button key={c.id} type="button" className={`twin-loss-row ${active === c.id ? 'is-active' : ''}`} onClick={() => onOpen(c.id)}>
+            <span className="w-2.5 h-2.5 rounded-full mt-1" style={{ background: SEVERITY_COLOR[c.severity] || SEVERITY_COLOR.info, boxShadow: `0 0 6px ${SEVERITY_COLOR[c.severity] || SEVERITY_COLOR.info}` }} />
+            <span className="min-w-0">
+              <span className="block text-[11.5px] text-fg truncate"><b>{c.ref}</b> · {c.title}</span>
+              <span className="block text-[10.5px] text-fg-faint truncate">{c.kind_label} · {c.zone}</span>
+              {c.next_step && <span className="block text-[10.5px] text-warning truncate">Next: {c.next_step.text}</span>}
+            </span>
+            <span className="text-right">
+              <span className="block text-[11.5px] font-semibold tabular-nums text-fg">{c.value_usd ? usd(c.value_usd) : '—'}</span>
+              <span className="block text-[10px] text-fg-faint">{c.status}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+      <button type="button" className="link-btn" onClick={() => navigate(linkTo('loss-prevention'))}>OPEN LOSS PREVENTION →</button>
+    </div>
+  );
+}
+
 export default function FacilityTwin({ code }) {
   const { data, error, reload } = useApi(`/api/twin/facility/${code}`, {}, { every: 1 });
   const holder = useRef(null);
   const api = useRef(null);
   const [fail, setFail] = useState(null);
   const [view, setView] = useState('top');
-  const [layers, setLayers] = useState({ workers: true, flow: true, counts: true, labels: true, readers: true, heat: false });
+  const [layers, setLayers] = useState({ workers: true, flow: true, counts: true, labels: true, readers: true, heat: false, security: true });
   const [line, setLine] = useState(null);
   const [stage, setStage] = useState(null);
   const [worker, setWorker] = useState(null);
@@ -314,6 +355,7 @@ export default function FacilityTwin({ code }) {
   const [tab, setTab] = useState('floor');
   const [area, setArea] = useState(null);
   const [legend, setLegend] = useState(false);
+  const [lossId, setLossId] = useState(null);
 
   useEffect(() => {
     if (!data || api.current || !holder.current) return;
@@ -322,6 +364,7 @@ export default function FacilityTwin({ code }) {
         onSelectLine: (id) => { setLine(id); setArea(null); if (id) setTab('floor'); },
         onSelectWorker: (id) => setWorker(id),
         onSelectArea: (u) => { setArea(u); setLine(null); setTab('floor'); },
+        onSelectLoss: (id) => { setLossId(id); setTab('loss'); },
         onHover: (info, x, y) => setHover(info ? { info, x, y } : null),
       });
     } catch (e) {
@@ -329,9 +372,12 @@ export default function FacilityTwin({ code }) {
     }
   }, [data]);
   useEffect(() => () => { api.current?.dispose(); api.current = null; }, []);
+  // every refresh: live state, incl. the loss-prevention markers (data.loss), updated in place
   useEffect(() => { if (data && api.current) api.current.update(data); }, [data]);
   useEffect(() => { api.current?.select(line); }, [line]);
   useEffect(() => { api.current?.focusStage(stage); }, [stage]);
+  useEffect(() => { api.current?.selectLoss(lossId); }, [lossId]);
+  const openLoss = (id) => { setLossId(id); api.current?.focusLoss(id); };
 
   const toggleLayer = (k) => setLayers((l) => {
     const n = { ...l, [k]: !l[k] };
@@ -343,6 +389,8 @@ export default function FacilityTwin({ code }) {
   const totalOut = data ? data.lines.reduce((a, l) => a + l.output_today, 0) : 0;
   const running = data ? data.lines.filter((l) => l.status === 'Running').length : 0;
   const threshold = r?.alert_threshold_min || 10;
+  const lossCases = data?.loss || [];
+  const lossCrit = lossCases.filter((c) => c.severity === 'critical').length;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
@@ -364,6 +412,11 @@ export default function FacilityTwin({ code }) {
                   <Stat label="Lines running" value={`${running}/${data.lines.length}`} tone={running < data.lines.length ? 'warning' : 'success'} />
                   <Stat label="At station" value={`${r.at_station}/${r.badges_on_floor}`} sub={`${pct(r.availability_pct, 1)} of time`} tone="success" />
                   <Stat label="Away now" value={r.away} tone={r.away ? 'warning' : undefined} sub={`${r.on_break} on break`} />
+                  {lossCases.length > 0 && (
+                    <button type="button" className="text-left" onClick={() => setTab('loss')} title="Open loss-prevention cases">
+                      <Stat label="Loss cases" value={lossCases.length} tone={lossCrit ? 'danger' : 'warning'} sub={lossCrit ? `${lossCrit} critical` : 'open'} />
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="absolute right-3 top-3 twin-glass p-1 flex flex-col gap-1" style={{ pointerEvents: 'auto' }}>
@@ -400,6 +453,11 @@ export default function FacilityTwin({ code }) {
                       ))}
                     </div>
                     <p className="mt-1.5 text-fg-faint">{view === 'top' ? 'Drag to pan · scroll to zoom · click a line or a person' : 'Drag to orbit · right-drag to pan · scroll to zoom'}</p>
+                    <p className="mt-0.5 text-fg-faint">
+                      Security: pulsing beacons are open loss-prevention cases (
+                      <span style={{ color: SEVERITY_COLOR.critical }}>critical</span> · <span style={{ color: SEVERITY_COLOR.warning }}>warning</span> · <span style={{ color: SEVERITY_COLOR.info }}>info</span>
+                      ) · click one to open the case
+                    </p>
                   </>
                 )}
               </div>
@@ -419,10 +477,11 @@ export default function FacilityTwin({ code }) {
       </div>
       <aside className="w-full lg:w-[400px] shrink-0 flex flex-col min-h-0 border-t lg:border-t-0 lg:border-l" style={{ borderColor: 'var(--twin-line)', background: 'rgba(6,12,24,.6)' }}>
         <div className="px-3 pt-3">
-          <Tabs size="sm" value={tab} onChange={setTab} tabs={[
+          <Tabs size="sm" value={tab} onChange={setTab} className="max-w-full overflow-x-auto twin-scroll" tabs={[
             { value: 'floor', label: selLine ? selLine.code.split('-')[1] : 'Floor' },
             { value: 'workforce', label: 'Workforce · RFID' },
             { value: 'siap', label: 'S!AP advisories' },
+            { value: 'loss', label: lossCases.length ? `Loss · ${lossCases.length}` : 'Loss' },
             { value: 'cctv', label: 'CCTV' },
           ]} />
         </div>
@@ -449,9 +508,11 @@ export default function FacilityTwin({ code }) {
               <SiapAdvisoryList factory={code} compact />
             </div>
           )}
+          {data && tab === 'loss' && <LossPanel cases={lossCases} plant={data.factory.name} active={lossId} onOpen={openLoss} />}
         </div>
       </aside>
       {worker && <WorkerDrawer id={worker} onClose={() => setWorker(null)} threshold={threshold} />}
+      {lossId && <LossIncidentDrawer id={lossId} onClose={() => setLossId(null)} />}
     </div>
   );
 }
@@ -476,8 +537,20 @@ function AreaCard({ area, data, onClose }) {
     title = `Packing cell ${area.cell + 1}`;
     body = <p className="text-[11px] text-fg-muted">Camera-verified carton packing for {ls.map((l) => l.name).join(' & ')} · {num(ls.reduce((a, l) => a + l.stages.packing.queue, 0))} pillows queued.</p>;
   } else if (area.kind === 'rack') {
+    const zs = data.warehouse.zone_stock?.[area.zone];
     title = `Rack zone ${area.zone}`;
-    body = <p className="text-[11px] text-fg-muted">{(data.warehouse.racks[area.zone] || []).length} of 48 pallet positions occupied · {num(data.warehouse.total_pillows)} pillows in finished goods ({num(data.warehouse.reserved_pillows)} reserved).</p>;
+    body = <p className="text-[11px] text-fg-muted">{zs ? zs.pallets : (data.warehouse.racks[area.zone] || []).length} of {zs ? zs.capacity : 48} pallet positions occupied · finished goods in all zones: {num(data.warehouse.stored_pallets)} pallets, {num(data.warehouse.total_pillows)} pillows ({num(data.warehouse.reserved_pillows)} reserved).</p>;
+  } else if (area.kind === 'floor') {
+    const lanes = (data.warehouse.locations || []).filter((l) => l.kind === 'Floor' && l.bay === area.bay);
+    title = `Zone D floor lanes · bay ${area.bay} (dock ${area.dock})`;
+    body = (
+      <>
+        <p className="text-[11px] text-fg-muted">{lanes.reduce((a, l) => a + l.pallets, 0)} of {lanes.reduce((a, l) => a + l.capacity, 0)} bulk pallet places in use (Gaylords, stacked 3 high).</p>
+        <div className="mt-1.5 space-y-0.5">
+          {lanes.map((l) => <p key={l.code} className="text-[10.5px] text-fg-faint tabular-nums">{l.code} · {l.pallets}/{l.capacity} pallets</p>)}
+        </div>
+      </>
+    );
   } else if (area.kind === 'dock') {
     const d = data.docks.find((x) => x.dock === area.dock);
     title = `Dock ${area.dock}`;
@@ -521,8 +594,29 @@ function HoverCard({ hover, threshold }) {
   } else if (info.kind === 'dock' && info.dock) {
     const d = info.dock;
     content = <><p className="font-bold text-fg">Dock {d.dock}</p><p className="text-fg-muted">{d.truck ? `${d.truck} · ${d.customer} · ${d.status}` : 'Free'}</p></>;
+  } else if (info.kind === 'loss' && info.loss) {
+    // case facts only: never a person's name next to a loss marker
+    const c = info.loss;
+    content = (
+      <>
+        <p className="font-bold text-fg flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: SEVERITY_COLOR[c.severity] || SEVERITY_COLOR.info }} />{c.ref} · {c.kind_label}</p>
+        <p className="text-fg-muted">{c.title}</p>
+        <p className="text-fg-faint">{c.zone} · {c.status}{c.value_usd ? ` · ${usd(c.value_usd)} at risk` : ''}</p>
+        {c.next_step && <p className="text-warning mt-1">Next: {c.next_step.text}</p>}
+        <p className="text-sky-300 mt-1">Click to open the case</p>
+      </>
+    );
   } else if (info.kind === 'qa') content = <p className="font-bold text-fg">QA hold cage</p>;
   else if (info.kind === 'rack') content = <p className="font-bold text-fg">Finished goods rack zone {info.zone}</p>;
+  else if (info.kind === 'floor') {
+    const lanes = info.lanes || [];
+    content = (
+      <>
+        <p className="font-bold text-fg">Zone D floor lanes · bay {info.bay}</p>
+        <p className="text-fg-muted">{lanes.reduce((a, l) => a + l.pallets, 0)}/{lanes.reduce((a, l) => a + l.capacity, 0)} bulk pallets · in front of dock {info.dock}</p>
+      </>
+    );
+  }
   else if (info.kind === 'packing') content = <p className="font-bold text-fg">Packing cell {info.cell + 1} · CV pillow count</p>;
   if (!content) return null;
   return <div className="twin-tooltip twin-glass" style={{ left: x, top: y }}>{content}</div>;

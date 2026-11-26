@@ -435,10 +435,21 @@ function drawEvents(ctx, d, f, u, compact, feed) {
         { u, size: 12, bg: 'rgba(76,29,149,0.92)', fg: '#ede9fe', bold: true, align: 'center' });
       ctx.globalAlpha = 1;
     }
-    if (e.type === 'restricted' && age <= 30) {
-      ctx.lineWidth = 6 * u;
-      ctx.strokeStyle = `rgba(239,68,68,${0.8 * (1 - age / 30)})`;
-      ctx.strokeRect(3, 3, W - 6, H - 6);
+    if (e.type === 'restricted' && age <= 45) {
+      if (!e.badged && age <= 30) {
+        ctx.lineWidth = 6 * u;
+        ctx.strokeStyle = `rgba(239,68,68,${0.8 * (1 - age / 30)})`;
+        ctx.strokeRect(3, 3, W - 6, H - 6);
+      }
+      const z = d.zoneById[e.zone];
+      if (z) {
+        // access check only: the vision system never names or accuses the person in view
+        const b = bounds(z.pts);
+        ctx.globalAlpha = Math.min(1, (45 - age) / 10);
+        chip(ctx, (b.x0 + b.x1) / 2, b.y1 + 4 * u, e.badged ? '✓ BADGE READ · ACCESS LOGGED' : '⚠ NO BADGE READ · VERIFY',
+          { u, size: compact ? 9.5 : 11, bg: e.badged ? 'rgba(20,83,45,0.92)' : 'rgba(153,27,27,0.94)', fg: e.badged ? '#dcfce7' : '#fee2e2', bold: true, align: 'center' });
+        ctx.globalAlpha = 1;
+      }
     }
   });
   if (feed?.kind === 'packing' && !compact) {

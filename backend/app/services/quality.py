@@ -8,7 +8,7 @@
 Only approved cartons reach pallets and finished-goods inventory."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -87,25 +87,32 @@ def approve(db: Session, carton: m.Carton, po: m.ProductionOrder, now: datetime,
 
 
 def pack_carton(db: Session, po: m.ProductionOrder, line: m.ProductionLine, now: datetime,
-                detected: int | None = None, defect: str | None = None, source: str = "simulated",
+                detected: int | None = None, defect: str | None = None, source: str = "edge-vision",
                 confidence: float = 0.97) -> m.Carton:
-    """Create one carton from the packing queue and validate it."""
+    """Create one carton from the packing queue and validate it.
+
+    A carton can only hold pillows that are waiting at the station: a count above the packing queue
+    (camera over-read, or a request for more than exists) is booked at the queue, so packed + held +
+    queued never exceeds what the line completed. The carton is still validated on the count that was
+    read, so a mismatch is held for a recount."""
     sku = db.get(m.Sku, po.sku_id)
     req = sku.pillows_per_carton
-    detected = req if detected is None else detected
+    seen = req if detected is None else detected
+    detected = max(0, min(seen, po.pack_queue or 0))
     carton = m.Carton(factory_id=po.factory_id, line_id=line.id, po_id=po.id, sku_id=sku.id,
                       customer_id=sku.customer_id, required_count=req, detected_count=detected,
                       created_at=now, inference_source=source, confidence=confidence)
     db.add(carton)
     db.flush()
-    po.pack_queue = max(0, po.pack_queue - detected)
+    po.pack_queue -= detected
     _consume_packaging(db, po.factory_id, sku, detected)
     cam = _camera(db, po.factory_id, "Carton packing", line.id)
     final_cam = _camera(db, po.factory_id, "Final inspection")
     if cam:
         cam.inspections_today = (cam.inspections_today or 0) + 1
-    if detected != req or defect:
-        carton.result = "Underpacked" if detected < req else "Overpacked" if detected > req else "Defect"
+    if seen != req or detected != req or defect:
+        count = seen if seen != req else detected  # what the reading says, else what was physically there
+        carton.result = "Underpacked" if count < req else "Overpacked" if count > req else "Defect"
         carton.defect_category = defect or carton.result
         carton.status = "Blocked"
         carton.first_pass = False
@@ -113,9 +120,11 @@ def pack_carton(db: Session, po: m.ProductionOrder, line: m.ProductionLine, now:
         po.held_qty += detected
         db.add(m.DefectRecord(carton_id=carton.id, factory_id=po.factory_id, line_id=line.id, po_id=po.id,
                               sku_id=sku.id, customer_id=sku.customer_id, category=carton.defect_category,
-                              qty=abs(req - detected) or 1, disposition="Rework", status="Open", created_at=now))
-        msg = (f"{carton.hold_code}: {carton.defect_category} — detected {detected}/{req} pillows ({sku.code})"
+                              qty=abs(req - count) or 1, disposition="Rework", status="Open", created_at=now))
+        msg = (f"{carton.hold_code}: {carton.defect_category} — detected {count}/{req} pillows ({sku.code})"
                if not defect else f"{carton.hold_code}: {defect} on {sku.code}")
+        if seen > detected:
+            msg += f"; only {detected} pillow(s) were waiting at the station, recount required"
         _detect(db, cam, now, "mismatch", msg, confidence, carton, detected, "critical")
         log_event(db, now, po.factory_id, "quality", "carton_blocked", msg, "carton", carton.id)
     else:
@@ -132,8 +141,20 @@ def rework(db: Session, carton: m.Carton, now: datetime, user: str) -> None:
         raise ValueError("Only blocked cartons can be reworked")
     po = db.get(m.ProductionOrder, carton.po_id)
     diff = carton.required_count - carton.detected_count
+    if diff < 0:  # overpacked: the extra pillows go back to the packing queue
+        po.pack_queue += -diff
+    elif diff > 0:  # underpacked: top up from the queue, then from loose pillows set aside at rework,
+        # and only then have the line make the missing pillows, so every pillow in the carton was produced
+        from_queue = min(diff, max(0, po.pack_queue))
+        loose = max(0, po.completed_qty - po.pack_queue - po.held_qty - po.packed_qty)
+        made = max(0, diff - from_queue - loose)
+        po.pack_queue -= from_queue
+        if made:
+            po.completed_qty += made
+            log_event(db, now, carton.factory_id, "quality", "rework_topup",
+                      f"{made} pillow(s) made on {po.number} to complete reworked carton {carton.hold_code}",
+                      "carton", carton.id, user)
     po.held_qty = max(0, po.held_qty - carton.detected_count)
-    po.pack_queue = max(0, po.pack_queue - diff)  # add missing pillows / return extra ones
     carton.detected_count = carton.required_count
     approve(db, carton, po, now, user, "Reworked")
     for d in db.scalars(select(m.DefectRecord).where(m.DefectRecord.carton_id == carton.id, m.DefectRecord.status == "Open")):
@@ -198,6 +219,31 @@ def quality_counts(db: Session, factory_ids: list[int], since: datetime, until: 
     c["failed"] = c["inspected"] - c["passed_first"]
     c["accuracy_pct"] = round(100 * c["passed_first"] / c["inspected"], 2) if c["inspected"] else 100.0
     return c
+
+
+ERROR_RATE_DAYS = 7
+ERROR_RATE_MIN_CARTONS = 200   # below this a customer's error rate is too noisy to rank
+
+
+def customer_error_rates(db: Session, factory_ids: list[int], now: datetime, days: int = ERROR_RATE_DAYS,
+                         min_cartons: int = ERROR_RATE_MIN_CARTONS) -> list[dict]:
+    """First-pass failure rate per customer over the last `days` (rolling). One definition for the
+    Quality analytics chart, the S!AP insight and the AI assistant. Rows with fewer than `min_cartons`
+    inspected cartons are returned with ranked=False and sorted after the ranked ones."""
+    since = now - timedelta(days=days)
+    agg: dict[int, list[int]] = {}
+    for cid, fp, n in db.execute(select(m.Carton.customer_id, m.Carton.first_pass, func.count()).where(
+            m.Carton.factory_id.in_(factory_ids), m.Carton.created_at >= since, m.Carton.created_at <= now)
+            .group_by(m.Carton.customer_id, m.Carton.first_pass)):
+        a = agg.setdefault(cid, [0, 0])
+        a[0] += n
+        if not fp:
+            a[1] += n
+    names = {c.id: c.name for c in db.scalars(select(m.Customer))}
+    rows = [{"customer_id": cid, "customer": names.get(cid, "—"), "inspected": n, "errors": bad,
+             "error_rate_pct": round(100 * bad / n, 2) if n else 0.0, "ranked": n >= min_cartons}
+            for cid, (n, bad) in agg.items()]
+    return sorted(rows, key=lambda r: (not r["ranked"], -r["error_rate_pct"], -r["inspected"]))
 
 
 def next_hold(db: Session) -> str:

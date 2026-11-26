@@ -18,14 +18,12 @@ export const APP = {
   },
 };
 
-// REST API base. Empty = same origin (CRA dev proxy or the nginx container).
+// REST API base, from REACT_APP_API_URL (.env.production / .env.development). Empty = same origin.
 export const API_BASE = process.env.REACT_APP_API_URL || '';
 
-// WebSocket for live simulation updates.
+// WebSocket for live plant updates, from REACT_APP_WS_URL. Empty = /ws on the page's own host.
 export const WS_URL = process.env.REACT_APP_WS_URL || (() => {
   if (typeof window === 'undefined') return '';
-  const { protocol, hostname, port, host } = window.location;
-  const wsProto = protocol === 'https:' ? 'wss:' : 'ws:';
-  if (port === '3000') return `${wsProto}//${hostname}:8000/ws`; // CRA dev server -> local backend
-  return `${wsProto}//${host}/ws`;
+  const { protocol, host } = window.location;
+  return `${protocol === 'https:' ? 'wss:' : 'ws:'}//${host}/ws`;
 })();

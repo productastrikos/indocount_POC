@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-25T15:25:15",
+ "generated": "2026-11-26T12:07:40",
  "feeds": [
   {
    "id": "knv-04",
@@ -36,7 +36,16 @@
     "belt_speed_px_s": null,
     "station_active_pct": 94.2,
     "idle_events": 1,
-    "ocr_reads": 52
+    "ocr_reads": 52,
+    "badge_checks": 1,
+    "lp_events": [
+     {
+      "t": 16.33,
+      "zone": "lp1",
+      "zone_name": "FG aisle \u00b7 badge-only",
+      "dwell": 7.4
+     }
+    ]
    },
    "recognition": {
     "customer_code": "CST",
@@ -101,7 +110,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": 100.0,
     "idle_events": 0,
-    "ocr_reads": 76
+    "ocr_reads": 76,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": {
     "customer_code": "WMT",
@@ -171,7 +182,9 @@
     "belt_speed_px_s": 24.4,
     "station_active_pct": 100.0,
     "idle_events": 0,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -209,7 +222,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -247,7 +262,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -286,7 +303,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 1
+    "ocr_reads": 1,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": {
     "brand": "Serta",
@@ -337,7 +356,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -375,7 +396,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -415,7 +438,28 @@
     "belt_speed_px_s": null,
     "station_active_pct": 100.0,
     "idle_events": 0,
-    "ocr_reads": 31
+    "ocr_reads": 31,
+    "badge_checks": 3,
+    "lp_events": [
+     {
+      "t": 1.67,
+      "zone": "lp1",
+      "zone_name": "Staging lane \u00b7 badge-only",
+      "dwell": 1.3
+     },
+     {
+      "t": 10.4,
+      "zone": "lp1",
+      "zone_name": "Staging lane \u00b7 badge-only",
+      "dwell": 1.2
+     },
+     {
+      "t": 19.0,
+      "zone": "lp1",
+      "zone_name": "Staging lane \u00b7 badge-only",
+      "dwell": 1.0
+     }
+    ]
    },
    "recognition": {
     "customer_code": "WMT",
@@ -474,7 +518,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": 97.0,
     "idle_events": 0,
-    "ocr_reads": 55
+    "ocr_reads": 55,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": {
     "customer_code": "CST",
@@ -537,7 +583,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -575,7 +623,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -613,7 +663,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -652,7 +704,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 1
+    "ocr_reads": 1,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": {
     "brand": "Serta",
@@ -705,7 +759,16 @@
     "belt_speed_px_s": null,
     "station_active_pct": 100.0,
     "idle_events": 0,
-    "ocr_reads": 30
+    "ocr_reads": 30,
+    "badge_checks": 1,
+    "lp_events": [
+     {
+      "t": 2.6,
+      "zone": "lp1",
+      "zone_name": "Pillow staging \u00b7 badge-only",
+      "dwell": 2.0
+     }
+    ]
    },
    "recognition": {
     "customer_code": "WMT",
@@ -775,7 +838,28 @@
     "belt_speed_px_s": null,
     "station_active_pct": 100.0,
     "idle_events": 0,
-    "ocr_reads": 60
+    "ocr_reads": 60,
+    "badge_checks": 3,
+    "lp_events": [
+     {
+      "t": 6.47,
+      "zone": "lp1",
+      "zone_name": "Carton staging \u00b7 badge-only",
+      "dwell": 2.1
+     },
+     {
+      "t": 12.8,
+      "zone": "lp1",
+      "zone_name": "Carton staging \u00b7 badge-only",
+      "dwell": 1.7
+     },
+     {
+      "t": 19.6,
+      "zone": "lp1",
+      "zone_name": "Carton staging \u00b7 badge-only",
+      "dwell": 2.5
+     }
+    ]
    },
    "recognition": {
     "customer_code": "WMT",
@@ -845,7 +929,9 @@
     "belt_speed_px_s": 25.4,
     "station_active_pct": 78.5,
     "idle_events": 1,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -884,7 +970,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -922,7 +1010,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 0
+    "ocr_reads": 0,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": null
   },
@@ -961,7 +1051,9 @@
     "belt_speed_px_s": null,
     "station_active_pct": null,
     "idle_events": 0,
-    "ocr_reads": 1
+    "ocr_reads": 1,
+    "badge_checks": 0,
+    "lp_events": []
    },
    "recognition": {
     "brand": "Serta",

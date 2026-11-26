@@ -11,7 +11,7 @@ Every tool queries the same database the dashboards use and returns:
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from .. import models as m
 from ..services import inventory, machine_health as mh, metrics, planning, quality, readiness, workforce
 from ..services.common import factory_ids, iso
-from ..services.insights import supplier_performance
+from ..services.insights import supplier_performance, when
 
 
 def _fname(db, fids):
@@ -36,13 +36,13 @@ def _res(summary, data=None, chart=None, table=None, actions=None, links=None):
 def kpi_snapshot(db: Session, factory: str, now: datetime, **_):
     fids = factory_ids(db, factory)
     k = metrics.kpis(db, fids, now.date(), None, None, now)
-    p = k["production"]
+    p, sh = k["production"], k["shipment"]
     s = (f"{_fname(db, fids)} today: {p['actual']:,} pillows vs {p['target']:,} target ({p['achievement_pct']}%), "
          f"{k['efficiency']['pct']}% efficiency vs plan to date ({p['status']}). OEE {k['oee']['oee_pct']}% "
          f"(A {k['oee']['availability_pct']}% × P {k['oee']['performance_pct']}% × Q {k['oee']['quality_pct']}%). "
          f"Downtime {k['downtime']['total_min']} min; labour cost/pillow ${k['labour_cost']['per_pillow'] or 0:.3f}; "
-         f"packaging accuracy {k['packaging']['accuracy_pct']}%; {k['shipment']['ready']}/{k['shipment']['scheduled']} "
-         f"orders due in 48 h ready ({k['shipment']['at_risk']} at risk).")
+         f"packaging accuracy {k['packaging']['accuracy_pct']}%. Shipment readiness: {sh['ready']}/{sh['scheduled']} orders "
+         f"due within {sh.get('horizon_h', 24)} h picked & staged ({sh['pct']}%), {sh['on_track']} on track, {sh['at_risk']} at risk.")
     chart = {"type": "bar", "title": "OEE components (%)", "labels": ["Availability", "Performance", "Quality", "OEE"],
              "datasets": [{"label": "%", "data": [k["oee"]["availability_pct"], k["oee"]["performance_pct"],
                                                   k["oee"]["quality_pct"], k["oee"]["oee_pct"]]}]}
@@ -50,20 +50,43 @@ def kpi_snapshot(db: Session, factory: str, now: datetime, **_):
 
 
 def material_runout(db: Session, factory: str, now: datetime, days: float = 5, **_):
+    """Same cover / run-out as the Procurement page and S!AP: a delivery that is usable before the stock-out
+    extends the cover, so materials it rescues are not listed."""
     fids = factory_ids(db, factory)
-    rows = [r for r in inventory.material_rows(db, fids, now) if r["days_cover"] is not None and r["days_cover"] <= days]
+    allrows = inventory.material_rows(db, fids, now)
+    rows = sorted((r for r in allrows if r["days_cover"] is not None and r["days_cover"] <= days),
+                  key=lambda r: r["days_cover"])
+    committed = [r for r in allrows if r not in rows and r["uncovered"] > 0 and r["status"] in ("Critical", "Low")]
+    untracked = [r for r in allrows if r["status"] == "Untracked"]
+    extra = ""
+    if committed:
+        extra += (" Not running out yet, but open production orders need more than stock + open POs: " + "; ".join(
+            f"{r['code']} at {r['factory']} ({r['uncovered']:,.0f} {r['uom']} uncovered, {r['days_cover']} days cover)"
+            for r in committed) + ".")
+    if untracked:
+        extra += (" No stock record (cover unknown): " + "; ".join(
+            f"{r['code']} at {r['factory']} ({r['reserved']:,.0f} {r['uom']} needed by open orders)" for r in untracked) + ".")
     if not rows:
-        return _res(f"No raw material at {_fname(db, fids)} is projected to run out within {days:g} days.", [])
-    lines = [f"{r['code']} ({r['name']}) at {r['factory']}: {r['available']:,.0f} {r['uom']}, {r['days_cover']} days cover"
-             f" — next delivery {r['next_delivery'] or 'none scheduled'}" for r in rows]
-    s = f"{len(rows)} material(s) may run out within {days:g} days: " + "; ".join(lines) + "."
+        return _res(f"No raw material at {_fname(db, fids)} is projected to run out within {days:g} days, "
+                    f"counting deliveries that arrive before the stock-out." + extra, committed + untracked)
+
+    def nxt(r):
+        if r["late_delivery"]:
+            return f"next delivery {r['late_delivery']['ref']} usable {when(r['late_delivery']['usable_at'], now)}, after the stock-out"
+        return f"next delivery {when(r['next_delivery'], now)}" if r["next_delivery"] else "no delivery scheduled"
+
+    lines = [f"{r['code']} ({r['name']}) at {r['factory']}: {r['on_hand']:,.0f} {r['uom']} on hand, {r['days_cover']} days cover, "
+             f"stock-out {when(r['runout_at'], now)} — {nxt(r)}" for r in rows]
+    s = f"{len(rows)} material(s) may run out within {days:g} days: " + "; ".join(lines) + "." + extra
     chart = {"type": "bar", "title": "Days of stock remaining", "labels": [f"{r['code']} {r['factory']}" for r in rows],
              "datasets": [{"label": "Days cover", "data": [r["days_cover"] for r in rows],
                            "color": ["danger" if r["status"] == "Critical" else "warning" for r in rows]}]}
-    table = {"columns": ["Material", "Factory", "Available", "Use/day", "Days cover", "Incoming", "Next delivery"],
-             "rows": [[r["code"], r["factory"], f"{r['available']:,.0f} {r['uom']}", f"{r['consumption_per_day']:,.0f}",
-                       r["days_cover"], f"{r['incoming']:,.0f}", (r["next_delivery"] or "—").replace("T", " ")] for r in rows]}
-    acts = [f"Expedite or raise a PO for {r['code']} at {r['factory']}" for r in rows if r["status"] == "Critical"]
+    table = {"columns": ["Material", "Factory", "On hand", "Committed", "Use/day", "Days cover", "Stock-out", "On order", "Next delivery"],
+             "rows": [[r["code"], r["factory"], f"{r['on_hand']:,.0f} {r['uom']}", f"{r['reserved']:,.0f}",
+                       f"{r['consumption_per_day']:,.0f}", r["days_cover"], when(r["runout_at"], now), f"{r['incoming']:,.0f}",
+                       when(r["next_delivery"], now) if r["next_delivery"] else "—"] for r in rows]}
+    acts = [(f"Expedite {r['late_delivery']['po']} for {r['code']} at {r['factory']}" if r["late_delivery"]
+             else f"Raise a PO for {r['code']} at {r['factory']}") for r in rows if r["status"] == "Critical"]
     return _res(s, rows, chart, table, acts, [{"page": "procurement", "entity_type": "material", "entity_id": r["material_id"]} for r in rows[:3]])
 
 
@@ -83,24 +106,46 @@ def supplier_delays(db: Session, factory: str, now: datetime, **_):
 
 
 def line_downtime(db: Session, factory: str, now: datetime, **_):
+    """Downtime today, the same way as the Production page (metrics.downtime_detail): productive minutes of
+    the events overlapping today's window, scaled to the hourly records; "No orders" starvation is idle
+    time, reported separately and not counted as downtime."""
     fids = factory_ids(db, factory)
-    day0 = datetime.combine(now.date(), datetime.min.time())
-    by_line = defaultdict(lambda: defaultdict(float))
+    a, b = metrics.scope_window(now.date(), None, now)
+    dd = metrics.downtime_detail(db, fids, a, b, now)
     lines = {ln.id: ln for ln in db.scalars(select(m.ProductionLine))}
-    for d in db.scalars(select(m.DowntimeEvent).where(m.DowntimeEvent.factory_id.in_(fids), m.DowntimeEvent.start >= day0)):
-        by_line[d.line_id][d.category] += d.minutes or 0
-    if not by_line:
-        return _res("No downtime has been recorded today.", [])
-    rows = sorted(({"line": lines[k].name, "factory": db.get(m.Factory, lines[k].factory_id).code, "line_id": k,
-                    "total_min": round(sum(v.values()), 1), **{c: round(x, 1) for c, x in v.items()}} for k, v in by_line.items()),
-                  key=lambda r: -r["total_min"])
+    fcode = {f.id: f.code for f in db.scalars(select(m.Factory))}
+    causes = defaultdict(lambda: defaultdict(float))  # per-line split of the recorded downtime by cause
+    for e in db.scalars(select(m.DowntimeEvent).where(m.DowntimeEvent.factory_id.in_(fids), m.DowntimeEvent.start < b,
+                                                      (m.DowntimeEvent.end.is_(None)) | (m.DowntimeEvent.end > a))):
+        lo, hi = max(e.start, a), min(e.end or now, b)
+        if hi > lo and not metrics.is_no_orders(e.category, e.reason):
+            cat = e.category if e.category in metrics.DOWNTIME_CATEGORIES else "Other"
+            causes[e.line_id][cat] += metrics.cal.productive_minutes(lo, hi)
+    rows = []
+    for lid, v in dd["by_line"].items():
+        if lid not in lines or (v["down"] <= 0 and v["no_orders"] <= 0):
+            continue
+        cs = causes.get(lid, {})
+        explained = sum(cs.values())
+        scale = v["down"] / explained if explained > v["down"] else 1.0
+        split = {c: round(x * scale, 1) for c, x in cs.items()}
+        if v["down"] - sum(split.values()) > 0.05:
+            split["Other"] = round(split.get("Other", 0) + v["down"] - sum(split.values()), 1)
+        rows.append({"line": lines[lid].name, "factory": fcode[lines[lid].factory_id], "line_id": lid,
+                     "total_min": round(v["down"], 1), "no_orders_min": round(v["no_orders"], 1), **split})
+    rows.sort(key=lambda r: -r["total_min"])
+    idle = f" Idle without orders (not counted as downtime): {dd['no_orders_min']:.0f} min." if dd["no_orders_min"] else ""
+    if not rows or rows[0]["total_min"] <= 0:
+        return _res(f"No downtime has been recorded today at {_fname(db, fids)}." + idle, rows[:10])
     top = rows[0]
     cats = sorted(((c, top.get(c, 0)) for c in metrics.DOWNTIME_CATEGORIES if top.get(c)), key=lambda x: -x[1])
-    s = (f"{top['line']} ({top['factory']}) has the highest downtime today: {top['total_min']:.0f} min "
-         f"({', '.join(f'{c} {v:.0f} min' for c, v in cats)}). Next: " +
-         ", ".join(f"{r['line']} ({r['factory']}) {r['total_min']:.0f} min" for r in rows[1:4]) + ".")
-    top8 = rows[:8]
-    chart = {"type": "bar", "stacked": True, "title": "Downtime by line today (min)",
+    others = [r for r in rows[1:4] if r["total_min"] > 0]
+    s = (f"{_fname(db, fids)} downtime today: {dd['total_min']:.0f} min in planned production time. "
+         f"{top['line']} ({top['factory']}) has the most: {top['total_min']:.0f} min ({', '.join(f'{c} {v:.0f} min' for c, v in cats)})."
+         + (" Next: " + ", ".join(f"{r['line']} ({r['factory']}) {r['total_min']:.0f} min" for r in others) + "." if others else "")
+         + idle)
+    top8 = [r for r in rows if r["total_min"] > 0][:8]
+    chart = {"type": "bar", "stacked": True, "title": "Downtime by line today (min, excl. no-order idle)",
              "labels": [f"{r['line']} {r['factory']}" for r in top8],
              "datasets": [{"label": c, "data": [r.get(c, 0) for r in top8]} for c in metrics.DOWNTIME_CATEGORIES]}
     return _res(s, rows[:10], chart, links=[{"page": "production", "entity_type": "line", "entity_id": top["line_id"]}])
@@ -227,25 +272,27 @@ def carton_failures(db: Session, factory: str, now: datetime, **_):
     return _res(s, c | {"categories": dict(cats)}, chart, table, links=[{"page": "quality"}])
 
 
-def packaging_errors_by_customer(db: Session, factory: str, now: datetime, days: int = 7, **_):
+def packaging_errors_by_customer(db: Session, factory: str, now: datetime, days: int = quality.ERROR_RATE_DAYS, **_):
+    """Same definition as the Quality analytics chart and the S!AP insight (rolling window, minimum sample)."""
     fids = factory_ids(db, factory)
-    since = now - timedelta(days=days)
-    rows = defaultdict(lambda: [0, 0])
-    for cid, fp, n in db.execute(select(m.Carton.customer_id, m.Carton.first_pass, func.count()).where(
-            m.Carton.factory_id.in_(fids), m.Carton.created_at >= since).group_by(m.Carton.customer_id, m.Carton.first_pass)):
-        rows[cid][0] += n
-        if not fp:
-            rows[cid][1] += n
-    cust = {c.id: c.name for c in db.scalars(select(m.Customer))}
-    data = sorted(({"customer": cust[k], "inspected": v[0], "errors": v[1], "rate_pct": round(100 * v[1] / v[0], 2) if v[0] else 0}
-                   for k, v in rows.items()), key=lambda r: -r["rate_pct"])
+    days = int(days or quality.ERROR_RATE_DAYS)
+    data = [{"customer": r["customer"], "inspected": r["inspected"], "errors": r["errors"], "rate_pct": r["error_rate_pct"],
+             "ranked": r["ranked"]} for r in quality.customer_error_rates(db, fids, now, days)]
     if not data:
-        return _res("No carton inspections recorded in that period.", [])
-    top = data[0]
-    s = (f"{top['customer']} has the highest packaging error rate: {top['rate_pct']}% ({top['errors']} of {top['inspected']:,} cartons) "
-         f"over the cartons recorded in the system. Others: " + ", ".join(f"{r['customer']} {r['rate_pct']}%" for r in data[1:5]) + ".")
-    chart = {"type": "bar", "title": "Packaging error rate by customer (%)", "labels": [r["customer"] for r in data],
-             "datasets": [{"label": "Error %", "data": [r["rate_pct"] for r in data], "color": "danger"}]}
+        return _res(f"No carton inspections recorded in the last {days} days.", [])
+    ranked = [r for r in data if r["ranked"]]
+    small = [r for r in data if not r["ranked"]]
+    note = (f" Not ranked (fewer than {quality.ERROR_RATE_MIN_CARTONS} cartons): "
+            + ", ".join(f"{r['customer']} {r['errors']}/{r['inspected']:,}" for r in small) + "." if small else "")
+    if not ranked:
+        s = f"No customer has {quality.ERROR_RATE_MIN_CARTONS}+ inspected cartons in the last {days} days, so none is ranked." + note
+    else:
+        top = ranked[0]
+        s = (f"{top['customer']} has the highest packaging error rate over the last {days} days: {top['rate_pct']}% "
+             f"({top['errors']} of {top['inspected']:,} cartons failed first-pass inspection). Others: "
+             + (", ".join(f"{r['customer']} {r['rate_pct']}%" for r in ranked[1:5]) or "none") + "." + note)
+    chart = {"type": "bar", "title": f"Packaging error rate by customer, last {days} days (%)", "labels": [r["customer"] for r in ranked],
+             "datasets": [{"label": "Error %", "data": [r["rate_pct"] for r in ranked], "color": "danger"}]}
     return _res(s, data, chart, links=[{"page": "quality"}])
 
 
@@ -262,13 +309,15 @@ def orders_waiting_for_picking(db: Session, factory: str, now: datetime, **_):
         return _res("No orders are currently waiting for picking.", [])
     trucks = readiness.truck_for_orders(db, list(agg))
     rows = []
+    due = {}
     for oid, x in agg.items():
         o = db.get(m.CustomerOrder, oid)
         t = trucks.get(oid)
+        due[oid] = (t.scheduled_arrival if t else None) or o.scheduled_dispatch or now
         rows.append({"order": o.number, "order_id": oid, "customer": o.customer.name, "sku": o.sku.code, "cartons": x["cartons"],
-                     "pillows": x["pillows"], "truck": f"{t.ref} {t.scheduled_arrival:%a %H:%M}" if t else "—",
+                     "pillows": x["pillows"], "truck": f"{t.ref} {when(t.scheduled_arrival, now)}" if t else "—",
                      "locations": sorted(x["locations"])[:4]})
-    rows.sort(key=lambda r: r["truck"])
+    rows.sort(key=lambda r: due[r["order_id"]])
     s = f"{len(rows)} orders are waiting for picking: " + "; ".join(
         f"{r['order']} ({r['customer']}, {r['cartons']} cartons, truck {r['truck']})" for r in rows[:6]) + "."
     table = {"columns": ["Order", "Customer", "SKU", "Cartons", "Truck", "Locations"],
@@ -283,20 +332,27 @@ def locate_sku(db: Session, factory: str, now: datetime, sku: str = "", **_):
     if not skus:
         return _res(f"I couldn't find a SKU matching “{sku}”. Known SKUs: " + ", ".join(s.code for s in db.scalars(select(m.Sku))) + ".", [])
     out = []
+    fcodes = {f.id: f.code for f in db.scalars(select(m.Factory))}
     for s in skus:
-        for p in db.scalars(select(m.Pallet).where(m.Pallet.factory_id.in_(fids), m.Pallet.sku_id == s.id, m.Pallet.status == "Stored")):
-            out.append({"sku": s.code, "location": p.location.code if p.location else "—", "pallet": p.code, "cartons": p.cartons,
-                        "pillows": p.cartons * s.pillows_per_carton, "reserved_cartons": p.allocated_cartons,
-                        "factory": db.get(m.Factory, p.factory_id).code, "location_id": p.location_id})
+        for p in db.scalars(select(m.Pallet).where(m.Pallet.factory_id.in_(fids), m.Pallet.sku_id == s.id, m.Pallet.status == "Stored")
+                            .order_by(m.Pallet.factory_id, m.Pallet.stored_at)):
+            loc = p.location
+            out.append({"sku": s.code, "location": loc.code if loc else "—", "zone": loc.zone if loc else None,
+                        "pallet": p.code, "cartons": p.cartons, "pillows": p.cartons * s.pillows_per_carton,
+                        "reserved_cartons": p.allocated_cartons, "factory": fcodes[p.factory_id], "location_id": p.location_id})
     if not out:
         return _res(f"{', '.join(s.code for s in skus)} has no stored finished goods at {_fname(db, fids)} right now.", [])
-    tot = sum(r["pillows"] for r in out)
-    zones = sorted({r["location"].split("-")[1][0] for r in out if r["location"] != "—"})
-    s_ = (f"{', '.join(s.code for s in skus)} is stored in {len(out)} pallet location(s) — {tot:,} pillows "
-          f"({sum(r['reserved_cartons'] for r in out)} cartons reserved). Zones {', '.join(zones)}; e.g. " +
-          ", ".join(f"{r['location']} ({r['cartons']} ctn)" for r in out[:5]) + ".")
-    table = {"columns": ["Location", "Pallet", "SKU", "Cartons", "Reserved"],
-             "rows": [[r["location"], r["pallet"], r["sku"], r["cartons"], r["reserved_cartons"]] for r in out[:20]]}
+    plants = []
+    for code in sorted({r["factory"] for r in out}):
+        rs = [r for r in out if r["factory"] == code]
+        locs = {r["location_id"] for r in rs if r["location_id"]}
+        zones = sorted({r["zone"] for r in rs if r["zone"]})
+        plants.append(f"{code}: {len(rs)} pallet(s) in {len(locs)} location(s), {sum(r['pillows'] for r in rs):,} pillows "
+                      f"({sum(r['reserved_cartons'] for r in rs)} cartons reserved), zone(s) {', '.join(zones) or '—'}")
+    s_ = (f"{', '.join(s.code for s in skus)} stock — " + "; ".join(plants) + ". E.g. " +
+          ", ".join(f"{r['location']} ({r['factory']}, {r['cartons']} ctn)" for r in out[:5]) + ".")
+    table = {"columns": ["Location", "Plant", "Pallet", "SKU", "Cartons", "Reserved"],
+             "rows": [[r["location"], r["factory"], r["pallet"], r["sku"], r["cartons"], r["reserved_cartons"]] for r in out[:20]]}
     return _res(s_, out[:20], table=table, links=[{"page": "warehouse", "entity_type": "location", "entity_id": out[0]["location_id"]}])
 
 
@@ -308,22 +364,34 @@ def trucks_at_risk(db: Session, factory: str, now: datetime, **_):
     if not risky:
         return _res(f"No truck appointments at {_fname(db, fids)} are currently at risk.", [])
     rows = []
-    for o in sorted(risky, key=lambda x: info[x.id]["risk"]["slack_min"]):
-        t, r = info[o.id]["truck"], info[o.id]["risk"]
-        rows.append({"order": o.number, "order_id": o.id, "customer": o.customer.name, "truck": t.ref, "dock": t.dock,
-                     "arrival": t.scheduled_arrival.strftime("%a %H:%M"), "ready_eta": info[o.id]["ready_eta"].strftime("%a %H:%M"),
-                     "late_min": -r["slack_min"], "level": r["level"], "reasons": r["reasons"],
-                     "detention": r["est_detention"]})
-    s = f"{len(rows)} truck appointment(s) at risk: " + "; ".join(
-        f"{r['truck']} for {r['order']} ({r['customer']}) arrives {r['arrival']} but the order is projected ready {r['ready_eta']} "
-        f"({r['late_min']} min late{', est. detention $' + format(r['detention'], ',.0f') if r['detention'] else ''})" for r in rows[:5]) + "."
+    # no ready ETA (no stock or production covers the gap) is the most urgent
+    for o in sorted(risky, key=lambda x: info[x.id]["risk"]["slack_min"] if info[x.id]["risk"]["slack_min"] is not None else -1e9):
+        t, r, eta = info[o.id]["truck"], info[o.id]["risk"], info[o.id]["ready_eta"]
+        rows.append({"order": o.number, "order_id": o.id, "customer": o.customer.name, "truck": t.ref if t else "—",
+                     "dock": t.dock if t else None, "arrival": when(t.scheduled_arrival, now) if t else "—",
+                     "ready_eta": when(eta, now) if eta else None,
+                     "late_min": -r["slack_min"] if r["slack_min"] is not None else None, "level": r["level"],
+                     "reasons": r["reasons"], "detention": r["est_detention"]})
+
+    def line(r):
+        det = f", est. detention ${r['detention']:,.0f}" if r["detention"] else ""
+        if r["ready_eta"] is None:
+            return (f"{r['truck']} for {r['order']} ({r['customer']}) arrives {r['arrival']} but the order's ready time is "
+                    f"unknown — no stock or production covering the gap{det}")
+        lm = r["late_min"]
+        late = "late" if lm is None else f"{lm} min late" if lm < 120 else f"{lm / 60:.1f} h late"
+        return (f"{r['truck']} for {r['order']} ({r['customer']}) arrives {r['arrival']} but the order is projected ready "
+                f"{r['ready_eta']} ({late}{det})")
+
+    s = f"{len(rows)} truck appointment(s) at risk: " + "; ".join(line(r) for r in rows[:5]) + "."
     recs = []
     for o in risky[:2]:
         for rec in readiness.recommendations(o, info[o.id], now)[:2]:
             recs.append(f"{o.number}: {rec['label']}")
-    chart = {"type": "bar", "title": "Projected lateness vs truck arrival (min)", "labels": [r["order"] for r in rows],
-             "datasets": [{"label": "Minutes late", "data": [r["late_min"] for r in rows],
-                           "color": ["danger" if r["level"] == "High" else "warning" for r in rows]}]}
+    timed = [r for r in rows if r["late_min"] is not None]
+    chart = {"type": "bar", "title": "Projected lateness vs truck arrival (min)", "labels": [r["order"] for r in timed],
+             "datasets": [{"label": "Minutes late", "data": [r["late_min"] for r in timed],
+                           "color": ["danger" if r["level"] == "High" else "warning" for r in timed]}]} if timed else None
     return _res(s, rows, chart, actions=recs, links=[{"page": "dispatch", "entity_type": "order", "entity_id": rows[0]["order_id"]}])
 
 
@@ -376,9 +444,11 @@ def order_status(db: Session, factory: str, now: datetime, order: str = "", **_)
          f"(production {rd['ratios']['production']}%, quality {rd['ratios']['quality']}%, inventory {rd['ratios']['inventory']}%, "
          f"allocated {rd['ratios']['allocation']}%, picked {rd['ratios']['picking']}%). ")
     if t:
-        s += f"Truck {t.ref} at {t.dock}, {t.scheduled_arrival:%a %H:%M} ({t.status}). "
+        s += f"Truck {t.ref} at {t.dock}, {when(t.scheduled_arrival, now)} ({t.status}). "
     if info["ready_eta"]:
-        s += f"Projected ready {info['ready_eta']:%a %H:%M}. "
+        s += f"Projected ready {when(info['ready_eta'], now)}. "
+    elif o.status == "Open" and rd.get("blocking") is not None:
+        s += "Projected ready: unknown — no stock or production covering the gap. "
     if r["at_risk"]:
         s += f"AT RISK ({r['level']}): " + "; ".join(r["reasons"]) + "."
     chart = {"type": "bar", "title": f"{o.number} readiness (%)", "labels": [lbl for _, lbl in readiness.STAGES],
@@ -410,17 +480,45 @@ def inventory_status(db: Session, factory: str, now: datetime, **_):
     low = [r for r in mats if r["status"] in ("Critical", "Low")]
     s = (f"Finished goods at {_fname(db, fids)}: {fg['total_pillows']:,} pillows stored ({fg['available_pillows']:,} available, "
          f"{fg['reserved_pillows']:,} reserved), {fg['pending_putaway_pallets']} pallets pending put-away, warehouse {fg['utilization_pct']}% full. "
-         f"Raw materials below threshold: " + (", ".join(f"{r['code']} {r['factory']} ({r['days_cover']} d)" for r in low) or "none") + ".")
+         f"Raw materials below threshold: " + (", ".join(
+             f"{r['code']} {r['factory']} ({r['days_cover']} d cover" + (f", {r['uncovered']:,.0f} {r['uom']} short for open orders" if r["uncovered"] else "")
+             + ")" for r in low) or "none") + "."
+         + ("".join(f" {r['code']} at {r['factory']} has no stock record ({r['reserved']:,.0f} {r['uom']} needed by open orders)."
+                    for r in mats if r["status"] == "Untracked")))
     chart = {"type": "doughnut", "title": "Finished goods (pillows)", "labels": ["Available", "Reserved", "Pending put-away"],
              "datasets": [{"data": [fg["available_pillows"], fg["reserved_pillows"], fg["pending_putaway_pillows"]]}]}
     return _res(s, fg, chart, links=[{"page": "warehouse"}])
+
+
+def loss_cases(db: Session, factory: str, now: datetime, **_):
+    from ..services import loss
+    fids = factory_ids(db, factory)
+    k = loss.overview(db, fids, now)["kpis"]
+    L = loss._lookups(db)
+    active = [loss.incident_dict(db, r, L) for r in loss.incidents(db, fids, status="active")]
+    recent = [loss.incident_dict(db, r, L) for r in loss.incidents(db, fids, status="Resolved", limit=6)]
+    s = (f"Loss prevention at {_fname(db, fids)}: {k['active']} active case(s) ({k['critical_active']} critical, "
+         f"${k['value_at_risk']:,.0f} at standard cost under investigation). Last 7 days: {k['cases_7d']} cases, "
+         f"${k['confirmed_loss_7d']:,.0f} confirmed loss, ${k['recovered_value_7d']:,.0f} recovered"
+         + (f", {k['false_alarm_pct']}% false alarms" if k['false_alarm_pct'] is not None else "") + ". ")
+    if active:
+        s += "Most urgent: " + "; ".join(
+            f"{a['ref']} {a['title']} — next step: {a['next_step']['text'] if a['next_step'] else 'close with an outcome'}"
+            for a in active[:3]) + "."
+    chart = {"type": "bar", "title": "Cases by signal (7 days)",
+             "labels": [r["label"] for r in loss.overview(db, fids, now)["by_kind"]],
+             "datasets": [{"label": "Cases", "data": [r["count"] for r in loss.overview(db, fids, now)["by_kind"]]}]}
+    table = {"columns": ["Case", "Plant", "Signal", "Where", "Status", "Value"],
+             "rows": [[a["ref"], a["factory"], a["kind_label"], a["zone"], a["outcome"] or a["status"], f"${a['value_usd']:,.0f}"]
+                      for a in (active + recent)[:12]]}
+    return _res(s, {"kpis": k}, chart, table, links=[{"page": "loss-prevention"}])
 
 
 TOOLS = {
     "kpi_snapshot": (kpi_snapshot, "Current KPIs: output vs target, efficiency, OEE components, downtime, labour cost per pillow, packaging accuracy, shipment readiness.", {}),
     "material_runout": (material_runout, "Raw materials projected to run out within N days (days of stock cover, next deliveries).", {"days": {"type": "number", "description": "Horizon in days (default 5)"}}),
     "supplier_delays": (supplier_delays, "Supplier on-time delivery performance and currently delayed inbound shipments.", {}),
-    "line_downtime": (line_downtime, "Downtime minutes by production line and category for today.", {}),
+    "line_downtime": (line_downtime, "Downtime minutes by production line and cause for today (planned production time; no-order idle reported separately).", {}),
     "production_gap": (production_gap, "Explains why production is behind target: loss decomposition by cause, bottleneck stage, underperforming lines.", {}),
     "line_allocation": (line_allocation, "Runs the production scheduling optimizer and returns the recommended line allocation and sequence (proposal only).", {}),
     "labour_cost": (labour_cost, "Labour cost per pillow and per hour by factory, including the second-shift differential.", {}),
@@ -430,11 +528,12 @@ TOOLS = {
     "orders_waiting_for_picking": (orders_waiting_for_picking, "Customer orders with allocated stock that is not yet picked.", {}),
     "locate_sku": (locate_sku, "Where a SKU is stored in the warehouse (locations, pallets, quantities).", {"sku": {"type": "string", "description": "SKU code or part of it, e.g. WMT-MS-Q"}}),
     "trucks_at_risk": (trucks_at_risk, "Truck appointments at risk because the order will not be ready when the truck arrives.", {}),
-    "detention_cost": (detention_cost, "Estimated detention charges (illustrative) for delayed trucks over a period.", {"days": {"type": "integer", "description": "Look-back days (default 7)"}}),
+    "detention_cost": (detention_cost, "Estimated detention charges for delayed trucks over a period.", {"days": {"type": "integer", "description": "Look-back days (default 7)"}}),
     "machine_health": (machine_health_summary, "Machines with warning/critical health, anomalies and maintenance predictions.", {}),
     "order_status": (order_status, "Readiness, risk and truck for one customer order.", {"order": {"type": "string", "description": "Order number, e.g. ORD-501"}}),
     "workforce_productivity": (workforce_productivity, "Workforce deployment, utilization, idle time and employees below benchmark.", {}),
     "inventory_status": (inventory_status, "Finished goods stock (available/reserved) and raw materials below threshold.", {}),
+    "loss_cases": (loss_cases, "Loss prevention: suspected material pilferage / unexplained loss cases (cycle-count shortages, tagged cartons at the exit gate, after-hours store access, fibre consumption variance, inbound and load mismatches, scrap reconciliation, unbadged entries on CCTV), their status, next handling step and confirmed loss.", {}),
 }
 
 

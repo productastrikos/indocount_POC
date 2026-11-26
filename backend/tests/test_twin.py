@@ -69,6 +69,53 @@ def test_facility_flow_is_consistent(client, h):
     assert 50 < r["availability_pct"] <= 100
 
 
+def test_twin_draws_every_stored_pallet(client, h):
+    """Every storage location is sent with its pallet count — rack slots in zones A–C and the zone D bulk floor
+    lanes — so the pallets the twin draws equal the stored pallets on the FG tile."""
+    for code in ("KNV", "PHX", "CMH"):
+        d = get(client, h, f"/api/twin/facility/{code}")
+        wh = d["warehouse"]
+        locs = wh["locations"]
+        assert {x["zone"] for x in locs} >= {"A", "B", "C", "D"}
+        assert all(x["kind"] == "Floor" for x in locs if x["zone"] == "D")
+        assert all(0 <= x["pallets"] <= x["capacity"] for x in locs)
+        drawn = sum(x["pallets"] for x in locs)
+        assert drawn == wh["drawn_pallets"] == wh["stored_pallets"], code
+        assert sum(x["capacity"] for x in locs) == wh["capacity_pallets"]
+        assert sum(len(v) for v in wh["racks"].values()) == sum(x["pallets"] for x in locs if x["kind"] != "Floor")
+        for z, s in wh["zone_stock"].items():
+            assert s["pallets"] == sum(x["pallets"] for x in locs if x["zone"] == z)
+        fg = next(s for s in d["flow"] if s["key"] == "fg")
+        assert fg["extra"].startswith(f"{drawn} pallets")
+
+
+def test_flow_strip_counts_each_person_once(client, h):
+    """Each person on the shift is counted at exactly one step of the pillow-flow strip, so the step crews add up
+    to the people on the floor (maintenance technicians are outside the flow), and /worker-h uses each step's own hours."""
+    for code in ("KNV", "PHX", "CMH"):
+        d = get(client, h, f"/api/twin/facility/{code}")
+        flow = d["flow"]
+        crews = [set(s["crew"]) for s in flow]
+        assert all(len(c) == s["workers"] for c, s in zip(crews, flow))
+        seen = set()
+        for c in crews:
+            assert not (c & seen), f"{code}: a person is counted at two steps"
+            seen |= c
+        on_floor = [w for w in d["workers"] if w["state"] in ("Station", "Away", "Break")]
+        in_flow = [w for w in on_floor if w["flow_step"]]
+        assert sum(s["workers"] for s in flow) == len(in_flow) == d["flow_people"]["in_flow"]
+        assert d["flow_people"]["on_floor"] == len(on_floor) == d["rfid"]["badges_on_floor"]
+        assert d["flow_people"]["in_flow"] + d["flow_people"]["outside_flow"] == len(on_floor)
+        assert all(w["role"] == "Maintenance technician" for w in on_floor if not w["flow_step"])
+        for s in flow:
+            for wid in s["crew"]:
+                w = next(x for x in d["workers"] if x["id"] == wid)
+                assert w["flow_step"] == s["key"] and w["role"] in s["roles"]
+            hrs = sum(next(x for x in d["workers"] if x["id"] == wid)["station_min"] for wid in s["crew"]) / 60
+            if s["per_worker_hour"] is not None:
+                assert hrs >= 0.25
+
+
 def test_breaks_are_not_time_away(client, h):
     """Move into the next scheduled break: badges read in the break room / canteen,
     and the break minutes are never added to time away."""

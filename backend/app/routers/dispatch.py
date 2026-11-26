@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .. import models as m
 from ..auth import current_user, require
 from ..db import WRITE_LOCK, get_db
-from ..services import readiness
+from ..services import planning, readiness
 from ..services.common import business_rules, iso, log_event, next_number
 from ..simulation import engine
 from .core import commit_change
@@ -64,15 +64,19 @@ def summary(factory: str = "ALL", db: Session = Depends(get_db), user=Depends(cu
     open_rows = [r for r in rows if r["status"] not in ("Dispatched", "Delivered")]
     due48 = [r for r in open_rows if r["scheduled_dispatch"] and r["scheduled_dispatch"] <= iso(c.now + timedelta(hours=48))]
     day0 = datetime.combine(c.now.date(), datetime.min.time())
-    trucks = list(db.scalars(select(m.TruckAppointment).where(
+    booked = list(db.scalars(select(m.TruckAppointment).where(
         m.TruckAppointment.factory_id.in_(c.fids), m.TruckAppointment.scheduled_arrival >= day0,
         m.TruckAppointment.scheduled_arrival < day0 + timedelta(days=1))))
+    trucks = [t for t in booked if t.status != "Cancelled"]  # released/cancelled appointments are reported separately
     det = readiness.detention_summary(db, c.fids, c.now, 7)
+    rc = readiness.readiness_counts(db, c.fids, c.now)
     return {"open_orders": len(open_rows), "due_48h": len(due48),
-            "ready": sum(1 for r in due48 if r["status"] == "Ready for Dispatch"),
+            "ready_horizon_h": rc["horizon_h"], "due_ready_window": rc["scheduled"], "ready": rc["ready"],
+            "on_track": rc["on_track"], "at_risk_window": rc["at_risk"],
             "at_risk": sum(1 for r in open_rows if r["at_risk"]),
             "trucks_today": len(trucks), "trucks_departed_today": sum(1 for t in trucks if t.status == "Departed"),
             "trucks_waiting": sum(1 for t in trucks if t.status == "Arrived"),
+            "trucks_released_today": sum(1 for t in booked if t.status == "Cancelled"),
             "dispatched_today": sum(1 for r in rows if r["dispatched_at"] and r["dispatched_at"] >= iso(day0)),
             "detention": {k: det[k] for k in ("incurred_estimate", "projected_estimate", "delayed_trucks", "avg_wait_min", "charge_per_truck")}}
 
@@ -281,7 +285,7 @@ def risk_action(order_id: int, body: RiskAction, db: Session = Depends(get_db), 
         info = readiness.assess(db, [o], now)[o.id]
         open_pos = [p for p in info["pos"] if p.completed_qty < p.required_qty]
         need = {"prioritize": "production.write", "reallocate": "production.write", "expedite_picking": "warehouse.write",
-                "reschedule": "dispatch.write"}.get(body.action)
+                "reschedule": "dispatch.write", "top_up": "production.write"}.get(body.action)
         if not need:
             raise HTTPException(400, "Unknown action")
         if not has_perm(user, need):
@@ -292,6 +296,12 @@ def risk_action(order_id: int, body: RiskAction, db: Session = Depends(get_db), 
             (prioritize_po if body.action == "prioritize" else reallocate_po)(db, open_pos[0], now, user.username)
         elif body.action == "expedite_picking":
             expedite_order(db, o, now, user.username)
+        elif body.action == "top_up":
+            if open_pos or info["ready_eta"] is not None:
+                raise HTTPException(400, "Stock or open production already covers this order")
+            short = o.qty - o.allocated_qty - readiness.coverable_stock(db, [o]).get(o.id, 0)
+            if short <= 0 or planning.queue_top_up(db, o, short, now, user.username) is None:
+                raise HTTPException(400, "No line available for a top-up")
         elif body.action == "reschedule":
             t = info["truck"]
             if not t:

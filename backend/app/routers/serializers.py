@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import models as m
 from ..services.common import factory_ids, iso, sim_now
+from ..services.procurement import is_delayed
 
 
 class Ctx:
@@ -64,7 +65,7 @@ def shipment_dict(s: m.InboundShipment, L) -> dict:
             "material_id": mat.id, "material": mat.name, "sku": mat.code, "uom": mat.uom, "qty": s.qty,
             "expected_arrival": iso(s.expected_arrival), "original_expected_arrival": iso(s.original_expected_arrival),
             "actual_arrival": iso(s.actual_arrival), "dock": s.dock, "status": s.status, "delay_reason": s.delay_reason,
-            "delayed": bool(s.original_expected_arrival and s.expected_arrival and s.expected_arrival > s.original_expected_arrival),
+            "delayed": is_delayed(s),
             "scanned_qty": s.scanned_qty, "scanned_damaged": s.scanned_damaged}
 
 
@@ -97,7 +98,7 @@ def carton_dict(c: m.Carton, L) -> dict:
             "required": c.required_count, "detected": c.detected_count, "status": c.status, "result": c.result,
             "defect": c.defect_category, "first_pass": c.first_pass, "created_at": iso(c.created_at),
             "approved_at": iso(c.approved_at), "approved_by": c.approved_by, "override_reason": c.override_reason,
-            "pallet_id": c.pallet_id, "source": c.inference_source, "confidence": c.confidence,
+            "pallet_id": c.pallet_id, "source": "edge-vision" if c.inference_source == "simulated" else c.inference_source, "confidence": c.confidence,
             "carton_type": sku.carton_type, "packaging_type": sku.packaging_type}
 
 
@@ -129,6 +130,8 @@ def truck_dict(t: m.TruckAppointment, L, now: datetime) -> dict:
 def alert_dict(a: m.Alert, L) -> dict:
     page = {"procurement": "procurement", "production": "production", "quality": "quality",
             "warehouse": "warehouse", "dispatch": "dispatch"}.get(a.stage, "overview")
+    if a.entity_type == "loss_incident":
+        page = "loss-prevention"  # loss cases open in the Loss Prevention module
     return {"id": a.id, "key": a.key, "severity": a.severity, "factory_id": a.factory_id,
             "factory": L["factories"][a.factory_id].name if a.factory_id else None, "stage": a.stage, "page": page,
             "title": a.title, "description": a.description, "recommended_action": a.recommended_action,

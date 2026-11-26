@@ -25,7 +25,7 @@ function stat(feed) {
   return `${s.people_peak ?? 0} people in view`;
 }
 
-export function CctvTile({ feed, onOpen, size = 'md' }) {
+export function CctvTile({ feed, onOpen, size = 'md', lpCases = 0 }) {
   const ref = useRef(null);
   const visible = useVisible(ref);
   const { data } = useAnalytics(feed.analytics, visible);
@@ -38,7 +38,10 @@ export function CctvTile({ feed, onOpen, size = 'md' }) {
           <p className="text-xs font-semibold text-fg truncate">{feed.camera} · {feed.title}</p>
           <p className="text-[10.5px] text-fg-faint truncate">{[feed.factory, feed.line, feed.area, feed.ptz && 'PTZ'].filter(Boolean).join(' · ')}</p>
         </div>
-        <span className="text-[10.5px] text-fg-muted whitespace-nowrap">{stat(feed)}</span>
+        <span className="text-[10.5px] text-fg-muted whitespace-nowrap flex items-center gap-1.5">
+          {lpCases > 0 && <span className="badge tone-danger" title="Open loss-prevention case(s) linked to this camera">LP {lpCases}</span>}
+          {stat(feed)}
+        </span>
       </div>
     </button>
   );
@@ -51,6 +54,12 @@ export function CctvTile({ feed, onOpen, size = 'md' }) {
 export default function CctvWall({ factory = 'ALL', filter, chips, cols = 3, emptyText = 'No cameras for this selection.', onOpenWorker }) {
   useSimClock();
   const { data, loading, error } = useApi('/api/cctv/feeds', { factory }, { live: false });
+  const lp = useApi('/api/loss/incidents', { factory, status: 'active' }, { every: 10 });
+  const lpByCam = useMemo(() => {
+    const o = {};
+    (lp.data?.incidents || []).forEach((c) => { if (c.camera) o[c.camera] = (o[c.camera] || 0) + 1; });
+    return o;
+  }, [lp.data]);
   const [chip, setChip] = useState(chips?.[0]?.key || null);
   const [open, setOpen] = useState(null);
   const list = useMemo(() => {
@@ -80,7 +89,7 @@ export default function CctvWall({ factory = 'ALL', filter, chips, cols = 3, emp
       {loading && !data && <p className="text-xs text-fg-faint">Connecting to cameras…</p>}
       {data && !list.length && <p className="text-xs text-fg-faint">{emptyText}</p>}
       <div className={`grid grid-cols-1 ${grid} gap-3`}>
-        {list.map((f) => <CctvTile key={f.id} feed={f} onOpen={setOpen} />)}
+        {list.map((f) => <CctvTile key={f.id} feed={f} onOpen={setOpen} lpCases={lpByCam[f.camera] || 0} />)}
       </div>
       {open && <CctvViewer feedId={open} feeds={list} onClose={() => setOpen(null)}
         onOpenWorker={onOpenWorker ? (id) => { setOpen(null); onOpenWorker(id); } : undefined} />}

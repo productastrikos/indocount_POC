@@ -19,6 +19,7 @@ function telemetryScales() {
 
 function defaultStart(rec, simTime) {
   if (!simTime) return '';
+  if (rec?.window_start) return rec.window_start.slice(0, 16);
   if (rec?.suggested_window?.startsWith('Non-production')) return `${simTime.slice(0, 10)}T23:00`;
   return simTime.slice(0, 16);
 }
@@ -50,7 +51,7 @@ export function WorkOrderModal({ machine, rec, onClose, onDone }) {
       <div className="space-y-3">
         {rec && (
           <div className="tile tone-warning text-xs">
-            <b>{rec.risk} risk</b> · health {num(rec.health_score)} · est. {num(rec.est_hours_to_maintenance)} operating h to maintenance
+            <b>{rec.risk} risk</b> · health {num(rec.health_score)} · median time to failure (P50) {num(rec.est_hours_to_maintenance)} operating h
             <div className="text-fg-muted mt-1">Suggested window: {rec.suggested_window}</div>
           </div>
         )}
@@ -129,7 +130,7 @@ export default function MachinesTab({ factory, onOpen }) {
         ))}
       </div>
 
-      <Card title={<span className="flex items-center gap-2">Predictive maintenance recommendations <Badge tone="warning">SIMULATED MODEL</Badge></span>}
+      <Card title={<span className="flex items-center gap-2">Predictive maintenance recommendations</span>}
         subtitle={maint.data?.disclaimer} padded={false}>
         {maint.loading && !maint.data && <div className="p-4"><Loading /></div>}
         {maint.data && recs.length === 0 && <Empty>No machine currently needs maintenance.</Empty>}
@@ -150,7 +151,7 @@ export default function MachinesTab({ factory, onOpen }) {
                 <p className="text-[11.5px] text-fg mt-0.5"><b>Action:</b> {r.recommended_action} · <b>Window:</b> {r.suggested_window}</p>
               </div>
               <div className="text-right shrink-0">
-                <p className="label-caps">Est. time to maintenance</p>
+                <p className="label-caps" title="P50 of the remaining-useful-life distribution">Median time to failure (P50)</p>
                 <p className="text-sm font-bold text-fg">{num(r.est_hours_to_maintenance)} op h</p>
                 {r.has_work_order
                   ? <Badge tone="info">WORK ORDER OPEN</Badge>
@@ -224,18 +225,17 @@ export function MachineDrawer({ id, onClose }) {
                 <Icon name="alert" size={14} />
                 <span className="text-xs font-bold text-fg">Maintenance likely required</span>
                 <Badge tone={RISK_TONE[data.prediction.risk]}>{data.prediction.risk.toUpperCase()} RISK</Badge>
-                <Badge tone="neutral">ILLUSTRATIVE</Badge>
               </div>
               <div className="grid grid-cols-3 gap-3 mt-2 text-[11.5px]">
                 <div><p className="label-caps">Identified anomaly</p><p className="text-fg">{data.prediction.anomaly}</p></div>
-                <div><p className="label-caps">Est. time to maintenance</p><p className="text-fg font-semibold">{num(data.prediction.est_hours_to_maintenance)} operating h</p>
+                <div><p className="label-caps" title="P50 of the remaining-useful-life distribution">Median time to failure (P50)</p><p className="text-fg font-semibold">{num(data.prediction.est_hours_to_maintenance)} operating h</p>
                   <p className="label-caps mt-1">Suggested window</p><p className="text-fg">{data.prediction.suggested_window}</p></div>
                 <div><p className="label-caps">Recommended action</p><p className="text-fg">{data.prediction.recommended_action}</p></div>
               </div>
             </div>
           )}
 
-          <Sub>Telemetry vs baseline (simulated, 10-min resolution)</Sub>
+          <Sub>Telemetry vs baseline (10-min resolution)</Sub>
           {tel.length === 0 ? <Empty>No telemetry recorded.</Empty> : (
             <div className="grid sm:grid-cols-2 gap-3">
               {METRICS.map((k) => (

@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import models as m
@@ -185,7 +185,7 @@ def evaluate_line(ctx: PlanCtx, line, queue) -> tuple[dict, int]:
                 restart = max(rep, start)
                 end = cal.add_productive(restart, max(0.0, rem - made) / rate * 60)
                 mat = ctx.materials[mid]
-                delay_reason = f"{mat.code} projected stock-out {r_out:%a %H:%M}; replenishment {rep:%a %H:%M}"
+                delay_reason = f"{mat.code} projected stock-out {r_out:%a %b %d %H:%M}; replenishment {rep:%a %b %d %H:%M}"
         res[po.id] = {"start": start, "end": end, "line_id": line.id, "delay_reason": delay_reason, "rate": rate}
         t = end
         prev_sku = po.sku_id
@@ -373,3 +373,35 @@ def apply_run(db: Session, run: m.OptimizationRun, now: datetime) -> None:
     run.status = "Accepted"
     db.flush()
     recompute(db, now, [run.factory_id])
+
+
+TOP_UP_BUFFER_H = 12
+
+
+def queue_top_up(db: Session, order: m.CustomerOrder, pillows: int, now: datetime, user: str = "system"):
+    """Queue a production order for the part of a customer order that stock and open production cannot cover.
+    It goes first on the available line that already runs the SKU, else the least loaded one."""
+    from .common import log_event, next_number
+    ppc = order.sku.pillows_per_carton
+    qty = -(-int(pillows) // ppc) * ppc
+    lines = list(db.scalars(select(m.ProductionLine).where(
+        m.ProductionLine.factory_id == order.factory_id, m.ProductionLine.status.notin_(("Breakdown", "Maintenance")))))
+    if qty <= 0 or not lines:
+        return None
+    load = {ln.id: 0 for ln in lines}
+    for p in db.scalars(select(m.ProductionOrder).where(m.ProductionOrder.line_id.in_(load),
+                                                        m.ProductionOrder.status.in_(OPEN_PO))):
+        load[p.line_id] += max(0, p.required_qty - p.completed_qty)
+    line = min(lines, key=lambda ln: (0 if ln.current_sku_id == order.sku_id else 1, load[ln.id] / max(ln.planned_rate, 1), ln.id))
+    first = db.scalar(select(func.min(m.ProductionOrder.sequence)).where(
+        m.ProductionOrder.line_id == line.id, m.ProductionOrder.status.in_(OPEN_PO)))
+    po = m.ProductionOrder(number=next_number(db, m.ProductionOrder, "PRD-", 24000), customer_order_id=order.id,
+                           factory_id=order.factory_id, sku_id=order.sku_id, line_id=line.id, sequence=(first or 1) - 1,
+                           required_qty=qty, start_date=now, priority="High", status="Planned",
+                           required_completion=(order.scheduled_dispatch or now) - timedelta(hours=TOP_UP_BUFFER_H))
+    db.add(po)
+    db.flush()
+    log_event(db, now, order.factory_id, "production", "po_top_up",
+              f"Top-up {po.number} for {order.number}: {qty:,} pillows not covered by stock or open production; "
+              f"queued first on {line.name}", "production_order", po.id, user)
+    return po

@@ -58,7 +58,7 @@ export default function TwinExplorer({ target, onNavigate, onClose }) {
           <i style={socket === 'live' && sim?.running ? undefined : { background: '#f59e0b', animation: 'none' }} />
           {dateTime(sim?.sim_time)} · {sim?.running ? `live ${sim.speed}×` : 'paused'}
         </span>
-        <Badge tone="warning" className="hidden md:inline-flex">SIMULATED · RFID</Badge>
+        <Badge tone="success" dot className="hidden md:inline-flex">LIVE · RFID</Badge>
         <IconButton icon="close" label="Close digital twin" onClick={onClose} />
       </div>
       {error && <div className="p-4"><ErrorBox error={error} onRetry={reload} /></div>}

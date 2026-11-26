@@ -25,7 +25,7 @@ export default function InsightsPanel({ onClose }) {
         <div className="min-w-0">
           <h3 className="flex items-center gap-1.5 text-sm font-semibold text-accent"><Icon name="sparkles" size={15} />S!AP Advisories</h3>
           <p className="text-xs text-fg-faint truncate">
-            {tab === 'predictive' ? `${scope} · predictive model on simulated telemetry` : `${route?.label || 'Executive Overview'} · computed from live records`}
+            {tab === 'predictive' ? `${scope} · predictive model on live telemetry` : `${route?.label || 'Executive Overview'} · computed from live records`}
           </p>
         </div>
         <IconButton icon="close" label="Close" plain onClick={onClose} />

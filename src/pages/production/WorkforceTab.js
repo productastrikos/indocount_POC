@@ -43,17 +43,19 @@ export default function WorkforceTab({ factory, date, shift, highlight }) {
           <option value="1">Shift 1{currentShift === 1 ? ' (active)' : ''}</option>
           <option value="2">Shift 2{currentShift === 2 ? ' (active)' : ''} · +${rules.shift2_differential.toFixed(2)}/h</option>
         </select>
-        <span className="text-[11px] text-fg-faint">{lineName ? `${lineName} breakdown` : 'Scope: all lines'} · activity simulated per employee ID from production events (no facial recognition)</span>
+        <span className="text-[11px] text-fg-faint">{lineName ? `${lineName} breakdown` : 'Scope: all lines'} · activity per employee ID from production events (no facial recognition)</span>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
-        <Kpi label="Workers required" value={num(data.workers_required)} sub="Standard crew for scope" />
+        <Kpi label="Workers required" value={num(data.workers_required)} sub={lineId ? 'Line crew: filler, 2 sewers, bagger per shift' : 'Standard crew for scope'} />
         <Kpi label="Workers deployed" value={num(data.workers_deployed)} tone={data.workers_deployed < data.workers_required ? 'warning' : 'success'}
-          sub={`${data.absent} absent / on leave`} />
-        <Kpi label="Output per worker" value={num(data.output_per_worker, 1)} unit="pillows" sub={`${num(data.pillows)} pillows produced`} />
+          sub={`${data.absent} absent / on leave${data.source === 'shift summaries' ? ' · from the closed shift records' : ''}`} />
+        <Kpi label="Output per worker" value={num(data.output_per_worker, 1)} unit="pillows"
+          sub={`${num(data.pillows)} pillows · ${data.worker_hours ? `${num(data.pillows / data.worker_hours, 1)} per worker-hour` : 'no worker-hours yet'}`} />
         <Kpi label="Idle time" value={num(data.idle_hours, 1)} unit="h" tone={data.idle_hours > 4 ? 'warning' : undefined} sub={`≈ ${num(data.idle_fte, 1)} FTE of a shift`} />
         <Kpi label="Labour utilization" value={pct(data.labour_utilization_pct)} tone={data.labour_utilization_pct < 90 ? 'warning' : 'success'} sub="Productive ÷ available time" />
-        <Kpi label="Labour cost / hour" value={money(data.labour_cost_per_hour, 2)} sub={`${money(data.labour_cost)} paid so far`} />
+        <Kpi label="Labour cost / paid hour" value={money(data.labour_cost_per_hour, 2)}
+          sub={`${Object.keys(data.deployed_by_shift || {}).length > 1 ? 'Average crew cost per paid hour across shifts' : 'Crew cost per paid hour'} · ${money(data.labour_cost)} over ${num(data.paid_hours, 1)} paid h`} />
         <Kpi label="Labour cost / pillow" value={data.labour_cost_per_pillow != null ? `$${data.labour_cost_per_pillow.toFixed(3)}` : '—'} sub="Incl. shift-2 differential" />
       </div>
 
@@ -109,7 +111,7 @@ export default function WorkforceTab({ factory, date, shift, highlight }) {
             { key: 'shift', header: 'Shift' },
             { key: 'employment_type', header: 'Type' },
             { key: 'hourly_wage', header: 'Wage', render: (e) => <span>${e.hourly_wage.toFixed(2)}{e.differential > 0 && <span className="block text-[10px] text-fg-faint">incl. +${e.differential.toFixed(2)} diff.</span>}</span> },
-            { key: 'attendance', header: 'Attendance', render: (e) => <StatusBadge status={e.attendance} tone={e.attendance === 'Scheduled' ? 'neutral' : undefined} /> },
+            { key: 'attendance', header: 'Attendance', render: (e) => <StatusBadge status={e.attendance} tone={e.attendance === 'Scheduled' || e.attendance === 'Not recorded' ? 'neutral' : undefined} /> },
             { key: 'units', header: 'Contribution', render: (e) => (e.units ? `${num(e.units)} pcs` : '—') },
             { key: 'productive_min', header: 'Productive', render: (e) => `${num(e.productive_min)} min` },
             { key: 'idle_min', header: 'Idle', render: (e) => `${num(e.idle_min)} min` },

@@ -25,6 +25,7 @@ const CATEGORY_ICON = {
   'Maintenance capacity': 'users',
   'Energy anomaly': 'bolt',
   'Workforce · RFID': 'signal',
+  'Loss prevention': 'shield',
 };
 
 export const MAINTENANCE_CATEGORIES = ['Predictive maintenance', 'Spare parts', 'Maintenance capacity'];
@@ -187,7 +188,7 @@ export function SiapAdvisoryItem({ a, compact = false, onOpenMachine, onChanged 
         )}
         {action && !allowed && <span className="text-[10.5px] text-fg-faint">Scheduling needs the maintenance role</span>}
         {(a.machine || a.link) && (
-          <Button size="sm" variant="secondary" icon="external" onClick={openMachine}>Open machine</Button>
+          <Button size="sm" variant="secondary" icon="external" onClick={openMachine}>{a.machine ? 'Open machine' : (a.link?.label || 'Open record')}</Button>
         )}
         {a.evidence?.length > 0 && (
           <button type="button" className="link-btn inline-flex items-center gap-1" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
@@ -234,7 +235,7 @@ export function SiapAdvisoriesCard({ factory, limit = 6, title = 'S!AP advisorie
   return (
     <Card
       title={<SiapMark size={14}>{title.replace(/^S!AP\s*/i, '')}</SiapMark>}
-      subtitle={subtitle || 'Predictive & prescriptive advisories · illustrative model on simulated telemetry'}
+      subtitle={subtitle || 'Predictive & prescriptive advisories from live telemetry'}
       style={{ borderColor: 'var(--color-accent-border)' }}
       padded={false}
       className={className}

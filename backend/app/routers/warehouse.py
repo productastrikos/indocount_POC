@@ -34,8 +34,9 @@ def summary(factory: str = "ALL", db: Session = Depends(get_db), user=Depends(cu
         m.Pallet.factory_id.in_(c.fids), m.Pallet.status == "Pending Put-away", m.Pallet.closed_at < c.now - timedelta(hours=2))) or 0
     pend_pick_orders = db.scalar(select(func.count(func.distinct(m.Allocation.order_id))).join(m.CustomerOrder).where(
         m.CustomerOrder.factory_id.in_(c.fids), m.Allocation.status == "Reserved")) or 0
-    return {**fg, "discrepancies": overridden + stale, "discrepancy_detail": {"override_count_cartons": overridden,
-                                                                              "unlocated_pallets_over_2h": stale},
+    # two different units (cartons vs pallets): reported side by side, never added together
+    return {**fg, "overridden_cartons_stored": overridden, "unlocated_pallets_over_2h": stale,
+            "discrepancy_detail": {"override_count_cartons": overridden, "unlocated_pallets_over_2h": stale},
             "pending_pick_orders": pend_pick_orders}
 
 
@@ -174,15 +175,20 @@ def allocation(factory: str = "ALL", days: int = 7, db: Session = Depends(get_db
         m.CustomerOrder.factory_id.in_(c.fids), m.CustomerOrder.status == "Open",
         m.CustomerOrder.scheduled_dispatch <= c.now + timedelta(days=days)).order_by(m.CustomerOrder.scheduled_dispatch)))
     info = readiness.assess(db, orders, c.now)
+    # Each carton of stock counts toward one order only: orders in ship-date order against a running pool
+    # (own production first, then free stock FIFO, never pallets made for another open order).
+    cover = insights.stock_cover(db, orders, c.now)
     rows = []
     for o in orders:
         s = stock.get((o.factory_id, o.sku_id), {"stored": 0, "reserved": 0, "available": 0, "locations": []})
-        shortage = max(0, o.qty - o.allocated_qty - s["available"])
+        pending = max(0, o.qty - o.allocated_qty)
+        from_stock = cover.get(o.id, 0)
+        shortage = pending - from_stock
         po = next(iter(info[o.id]["pos"]), None)
         rows.append({"order_id": o.id, "order": o.number, "customer": o.customer.name, "sku": o.sku.code, "factory": L["factories"][o.factory_id].code,
                      "required": o.qty, "allocated": o.allocated_qty, "picked": o.picked_qty,
                      "sku_total_stock": s["stored"], "sku_reserved": s["reserved"], "sku_unallocated": s["available"],
-                     "pending_requirement": max(0, o.qty - o.allocated_qty), "shortage": shortage,
+                     "pending_requirement": pending, "from_stock": from_stock, "shortage": shortage,
                      "linked_po": {"id": po.id, "number": po.number, "remaining": po.required_qty - po.completed_qty,
                                    "estimated_completion": iso(po.estimated_completion), "status": po.status} if po and shortage else None,
                      "scheduled_dispatch": iso(o.scheduled_dispatch), "readiness": info[o.id]["readiness"]})
@@ -190,6 +196,7 @@ def allocation(factory: str = "ALL", days: int = 7, db: Session = Depends(get_db
     return {"orders": rows, "totals": {"total": totals["total_pillows"], "reserved": totals["reserved_pillows"],
                                        "unallocated": totals["available_pillows"],
                                        "pending_requirements": sum(r["pending_requirement"] for r in rows),
+                                       "from_stock": sum(r["from_stock"] for r in rows),
                                        "shortage": sum(r["shortage"] for r in rows)},
             "stock_by_sku": [r | {"factory": L["factories"][r["factory_id"]].code} for r in inventory.stock_by_sku(db, c.fids)]}
 

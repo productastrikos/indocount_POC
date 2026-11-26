@@ -19,7 +19,7 @@ class Adapter(ABC):
         return bool(getattr(get_settings(), self.env_var.lower(), None)) if self.env_var else False
 
     def status(self) -> dict:
-        return {"name": self.name, "system": self.system, "mode": "live" if self.configured() else "simulated",
+        return {"name": self.name, "system": self.system, "mode": "live" if self.configured() else "standby",
                 "env": self.env_var, "capabilities": self.capabilities()}
 
     @abstractmethod
@@ -34,7 +34,7 @@ class ERPAdapter(Adapter):
         return ["Purchase orders (OPOR)", "Goods receipt PO (OPDN)", "Sales orders (ORDR)", "Deliveries (ODLN)", "Item master (OITM)"]
 
     def push_goods_receipt(self, receipt: dict) -> dict:
-        return {"status": "queued", "target": self.system, "payload": receipt, "mode": "simulated"}
+        return {"status": "queued", "target": self.system, "payload": receipt, "mode": "standby"}
 
 
 class HRMSAdapter(Adapter):

@@ -602,6 +602,48 @@ class TruckAppointment(Base):
     order = relationship("CustomerOrder")
 
 
+# ─── Loss prevention ─────────────────────────────────────────────────────
+class LossIncident(Base):
+    """A suspected material pilferage / unexplained loss case: the detection signal, the
+    evidence trail, the handling steps taken and the outcome (services/loss.py)."""
+    __tablename__ = "loss_incidents"
+    __table_args__ = (Index("ix_loss_factory_status", "factory_id", "status"),)
+    id = Column(Integer, primary_key=True)
+    ref = Column(String(20), unique=True, nullable=False)       # LP-KNV-0412
+    factory_id = Column(Integer, ForeignKey("factories.id"), nullable=False)
+    kind = Column(String(28), nullable=False)
+    stage = Column(String(20))       # procurement, production, quality, warehouse, dispatch
+    severity = Column(String(10))    # critical, warning, info
+    status = Column(String(14), default="Open")   # Open, Investigating, Resolved
+    outcome = Column(String(20))     # Confirmed loss, Recovered, Process error, False alarm
+    title = Column(String(200))
+    summary = Column(Text)
+    zone = Column(String(60))        # where in the plant
+    area = Column(String(20))        # layout key for the twins: material_store, receiving, line, qa, fg, staging, dock, gate
+    area_ref = Column(String(24))    # rack location code, dock, line id …
+    channel = Column(String(60))     # how it was detected
+    item = Column(String(90))
+    item_kind = Column(String(12))   # raw, packaging, fg
+    qty = Column(Float, default=0)
+    unit = Column(String(10))
+    value_usd = Column(Float, default=0)
+    recovered_qty = Column(Float, default=0)
+    detected_at = Column(DateTime)
+    updated_at = Column(DateTime)
+    resolved_at = Column(DateTime)
+    assigned_to = Column(String(60))
+    camera_code = Column(String(16))   # CCTV camera holding the evidence clip
+    feed_t = Column(Float)             # seconds into the recorded clip (CV-detected events only)
+    employee_id = Column(Integer, ForeignKey("employees.id"))   # badge read in the evidence (simulated)
+    line_id = Column(Integer, ForeignKey("production_lines.id"))
+    location_id = Column(Integer, ForeignKey("storage_locations.id"))
+    truck_id = Column(Integer, ForeignKey("truck_appointments.id"))
+    shipment_id = Column(Integer, ForeignKey("inbound_shipments.id"))
+    evidence = Column(JSON, default=list)   # [{source, ts, text}]
+    timeline = Column(JSON, default=list)   # [{ts, by, step, text}] handling steps done
+    note = Column(Text)
+
+
 # ─── Cross-cutting ───────────────────────────────────────────────────────
 class Alert(Base):
     __tablename__ = "alerts"

@@ -85,6 +85,10 @@
 .ftw-risk { border-left: 3px solid var(--c, #f59e0b); background: rgba(255, 255, 255, 0.03); border-radius: 6px; padding: 6px 8px; font-size: 11.5px; color: #dbeafe; }
 .ftw-risk small { display: block; color: #9cc3e4; font-size: 10.5px; margin-top: 2px; line-height: 1.35; }
 .ftw-tag { font-size: 9px; font-weight: 700; letter-spacing: 0.06em; padding: 1px 5px; border-radius: 4px; background: rgba(0, 212, 255, 0.16); color: #7dd3fc; margin-right: 5px; }
+.ftw-tag.is-loss { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+button.ftw-risk { display: block; width: 100%; text-align: left; cursor: pointer; transition: background 0.15s; }
+button.ftw-risk:hover { background: rgba(0, 212, 255, 0.1); }
+.ftw-risk-open { float: right; font-size: 9.5px; font-weight: 700; letter-spacing: 0.05em; color: #7dd3fc; margin-left: 6px; }
 .ftw-actions li { font-size: 11.5px; color: #dbeafe; line-height: 1.45; margin-left: 14px; list-style: disc; }
 .ftw-close { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; color: #b6d4f0; }
 .ftw-close:hover { background: rgba(0, 212, 255, 0.15); color: #fff; }
@@ -141,6 +145,21 @@
 .ftw-dock b { color: #fff; margin-right: 3px; }
 .ftw-dock span { display: block; color: #94a3b8; font-size: 9.5px; }
 .ftw-dock.is-busy { border-color: rgba(34, 197, 94, 0.7); }
+/* loss-prevention beacon label (one per stage with open cases) */
+.ftw-loss {
+  --c: #ef4444;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; line-height: 1.2;
+  font-size: 11px; color: #fff; padding: 3px 9px 3px 6px; border-radius: 999px;
+  background: rgba(8, 14, 28, 0.92); border: 1px solid var(--c);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--c) 50%, transparent);
+  transition: transform 0.15s;
+}
+.ftw-loss:hover { transform: scale(1.06); z-index: 10; background: color-mix(in srgb, var(--c) 28%, #08101e); }
+.ftw-loss i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); animation: ftw-blink 1.1s ease-in-out infinite; }
+.ftw-loss b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.ftw-loss span { color: #cbd5e1; font-size: 10px; }
+.ftw-view.is-top .ftw-loss span { display: none; }
+@keyframes ftw-blink { 50% { opacity: 0.3; } }
 .ftw-token {
   --c: #00d4ff; font-size: 11px; font-weight: 700; color: #04121f; background: var(--c); padding: 2px 8px; border-radius: 999px;
   white-space: nowrap; box-shadow: 0 0 14px var(--c);

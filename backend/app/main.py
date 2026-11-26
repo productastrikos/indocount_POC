@@ -15,7 +15,7 @@ from . import models as m
 from .config import get_settings
 from .db import WRITE_LOCK, SessionLocal, engine
 from .realtime import hub, runner
-from .routers import ai, cctv, core, dispatch, overview, predictive, procurement, production, quality, twin, warehouse
+from .routers import ai, cctv, core, dispatch, loss, overview, predictive, procurement, production, quality, twin, warehouse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("indocount")
@@ -42,6 +42,10 @@ def ensure_seeded() -> None:
                 log.info("Seeding demo data (runs the simulated morning shift)…")
                 seed(db)
                 log.info("Seed complete")
+            from .services import loss as loss_svc
+            from .services.common import sim_now
+            if loss_svc.ensure_baseline(db, sim_now(db)):  # databases seeded before loss prevention existed
+                db.commit()
         finally:
             db.close()
 
@@ -61,7 +65,7 @@ app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in get_setting
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
                    expose_headers=["X-CV-Provider", "X-Detected-Count"])
 
-for r in (core, overview, procurement, production, quality, warehouse, dispatch, ai, predictive, twin, cctv):
+for r in (core, overview, procurement, production, quality, warehouse, dispatch, ai, predictive, twin, cctv, loss):
     app.include_router(r.router)
 
 

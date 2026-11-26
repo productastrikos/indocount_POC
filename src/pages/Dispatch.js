@@ -4,13 +4,14 @@ import { Badge, Button, Card, DataTable, Drawer, Icon, Modal, ProgressBar, Tabs 
 import { FilterChips } from '../components/ui/Tabs';
 import { MiniChart } from '../components/charts/ChartCard';
 import {
-  BarRow, Empty, ErrorBox, InsightsCard, Kpi, KV, Loading, PageTitle, SimTag, StageAlerts, StatusBadge,
+  BarRow, Empty, ErrorBox, InsightsCard, Kpi, KV, Loading, PageTitle, StageAlerts, StatusBadge,
 } from '../components/common';
 import { useApi } from '../hooks/useApi';
 import { useApp } from '../data/DataProvider';
 import { patch, post } from '../api/client';
 import { dateShort, dateTime, dayTime, duration, hhmm, money, num, parseTs, pct } from '../utils';
 import CctvWall from '../components/cctv/CctvWall';
+import LossCasesCard from '../components/loss/LossCasesCard';
 
 const TABS = [
   { value: 'orders', label: 'Customer orders' },
@@ -18,11 +19,12 @@ const TABS = [
   { value: 'risk', label: 'Shipment risk' },
   { value: 'detention', label: 'Detention costs' },
   { value: 'cctv', label: 'Dispatch lane CCTV' },
+  { value: 'loss', label: 'Loss prevention' },
 ];
 const ORDER_STATUSES = ['Not Ready', 'Production Pending', 'Quality Pending', 'Inventory Pending', 'Picking Pending',
   'Ready for Dispatch', 'Dispatched', 'Delivered'];
-const ACTION_PERM = { prioritize: 'production.write', reallocate: 'production.write', expedite_picking: 'warehouse.write', reschedule: 'dispatch.write' };
-const ACTION_ICON = { prioritize: 'trendUp', reallocate: 'route', expedite_picking: 'box', reschedule: 'calendar' };
+const ACTION_PERM = { prioritize: 'production.write', reallocate: 'production.write', expedite_picking: 'warehouse.write', reschedule: 'dispatch.write', top_up: 'production.write' };
+const ACTION_ICON = { prioritize: 'trendUp', reallocate: 'route', expedite_picking: 'box', reschedule: 'calendar', top_up: 'factory' };
 const DONE = ['Dispatched', 'Delivered'];
 
 function parseFocus(search) {
@@ -107,7 +109,7 @@ function TruckActions({ truck, picked, onDone, onEdit }) {
   const dis = busy || !allowed;
   const title = allowed ? undefined : 'Requires dispatch permissions';
   if (truck.status === 'Departed') {
-    return <p className="text-[11px] text-fg-muted">Departed {dayTime(truck.departed_at)} with {num(truck.loaded_qty)} pillows{truck.detention_charge ? ` · detention ${money(truck.detention_charge)} (illustrative)` : ''}.</p>;
+    return <p className="text-[11px] text-fg-muted">Departed {dayTime(truck.departed_at)} with {num(truck.loaded_qty)} pillows{truck.detention_charge ? ` · detention ${money(truck.detention_charge)}` : ''}.</p>;
   }
   if (truck.status === 'Cancelled') return <p className="text-[11px] text-fg-faint">Appointment cancelled.</p>;
   return (
@@ -280,7 +282,7 @@ function OrderDrawer({ id, onClose, onEditTruck }) {
                   : `Tight: only ${duration(o.slack_min)} slack before ${o.truck.ref}`}
               </p>
               {o.risk_reasons.length > 0 && <ul className="mt-1.5 space-y-0.5">{o.risk_reasons.map((r) => <li key={r} className="text-[11px] text-fg-muted">• {r}</li>)}</ul>}
-              {o.est_detention > 0 && <p className="text-[11px] text-fg mt-1.5">Estimated detention {money(o.est_detention)} <span className="text-fg-faint">(illustrative)</span></p>}
+              {o.est_detention > 0 && <p className="text-[11px] text-fg mt-1.5">Estimated detention {money(o.est_detention)} </p>}
             </div>
           )}
           {data.recommendations.length > 0 && (
@@ -600,7 +602,7 @@ function RiskTab({ factory, customer, onOpen }) {
                   <div className={`tile tone-${tone}`}><p className="label-caps">Projected ready</p><p className="text-lg font-bold text-fg">{dayTime(o.ready_eta)}</p>
                     <p className="text-[10px] text-fg-muted">{o.at_risk ? `${duration(late)} after arrival` : `${duration(o.slack_min)} slack`}</p></div>
                   <div className="tile"><p className="label-caps">Est. detention</p><p className="text-lg font-bold" style={{ color: o.est_detention ? 'var(--color-danger)' : 'var(--color-text)' }}>{money(o.est_detention)}</p>
-                    <p className="text-[10px] text-fg-faint">illustrative estimate</p></div>
+                    <p className="text-[10px] text-fg-faint">estimate</p></div>
                 </div>
                 {o.risk_reasons.length > 0 && (
                   <ul className="space-y-0.5">{o.risk_reasons.map((r) => <li key={r} className="text-[11px] text-fg-muted">• {r}</li>)}</ul>
@@ -631,13 +633,13 @@ function DetentionTab({ factory, onOpen }) {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="tile tone-warning text-[11px] flex items-center gap-2 flex-1 min-w-[280px]">
           <Icon name="info" size={14} />
-          <span><b>Estimated / illustrative.</b> {data.note} Configurable charge {money(data.charge_per_truck)} per qualifying truck after {num(free)} free minutes.</span>
+          <span><b>Estimated.</b> {data.note} Configurable charge {money(data.charge_per_truck)} per qualifying truck after {num(free)} free minutes.</span>
         </div>
         <FilterChips label="Period" options={[{ value: 1, label: 'Today' }, { value: 7, label: '7 days' }, { value: 30, label: '30 days' }]} value={days} onChange={setDays} />
       </div>
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
         <Kpi label="Incurred (estimated)" icon="dollar" value={money(data.incurred_estimate)} tone={data.incurred_estimate ? 'danger' : 'success'}
-          sub={`From simulated arrival & loading events · ${data.period_days} d`} />
+          sub={`From truck arrival & loading times · ${data.period_days} d`} />
         <Kpi label="Projected (upcoming)" icon="clock" value={money(data.projected_estimate)} tone={data.projected_estimate ? 'warning' : 'success'}
           sub={`${data.projected.length} at-risk appointment(s), not yet incurred`} />
         <Kpi label="Delayed trucks" icon="truck" value={num(data.delayed_trucks)} sub={`of ${num(data.trucks_arrived)} arrivals waited > ${num(free)} min`} />
@@ -732,7 +734,6 @@ export default function Dispatch() {
     <div className="space-y-4">
       <PageTitle title="Dispatch & Delivery" subtitle="Every customer order shipped within its window — readiness, docks, trucks and detention exposure">
         {s?.at_risk > 0 && <Badge tone="danger" dot>{s.at_risk} AT RISK</Badge>}
-        <SimTag />
       </PageTitle>
       <StageAlerts stage="dispatch" />
       <ErrorBox error={error} onRetry={reload} />
@@ -740,16 +741,17 @@ export default function Dispatch() {
       {s && (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
           <Kpi label="Open orders" icon="clipboard" value={num(s.open_orders)} sub={`${num(s.due_48h)} due within 48 h`} onClick={() => setTab('orders')} />
-          <Kpi label="Ready for dispatch" icon="check" value={`${s.ready}/${s.due_48h}`} unit="due 48 h"
-            tone={s.due_48h && s.ready === s.due_48h ? 'success' : 'warning'} sub={`${pct(s.due_48h ? (100 * s.ready) / s.due_48h : 100, 0)} of near-term orders ready`} />
+          <Kpi label="Ready for dispatch" icon="check" value={`${s.ready}/${s.due_ready_window}`} unit={`due ${s.ready_horizon_h} h`}
+            tone={s.at_risk_window ? 'warning' : 'success'}
+            sub={`Picked & staged · ${s.on_track} on track${s.at_risk_window ? ` · ${s.at_risk_window} at risk` : ''} (picking starts ${s.ready_horizon_h} h before the truck)`} />
           <Kpi label="At risk" icon="alert" value={num(s.at_risk)} tone={s.at_risk ? 'danger' : 'success'}
             sub={s.at_risk ? 'Will not be ready when the truck arrives' : 'All appointments on track'} active={tab === 'risk'} onClick={() => setTab('risk')} />
           <Kpi label="Trucks today" icon="truck" value={num(s.trucks_today)} tone={s.trucks_waiting ? 'warning' : undefined}
-            sub={`${s.trucks_departed_today} departed · ${s.trucks_waiting} waiting at dock`} active={tab === 'schedule'} onClick={() => setTab('schedule')} />
+            sub={`${s.trucks_departed_today} departed · ${s.trucks_waiting} waiting at dock${s.trucks_released_today ? ` · ${s.trucks_released_today} released` : ''}`} active={tab === 'schedule'} onClick={() => setTab('schedule')} />
           <Kpi label="Dispatched today" icon="route" value={num(s.dispatched_today)} sub="Orders loaded and departed" />
           <Kpi label="Est. detention" icon="dollar" value={money(det.incurred_estimate + det.projected_estimate)}
             tone={det.incurred_estimate + det.projected_estimate ? 'warning' : 'success'}
-            sub={`${money(det.incurred_estimate)} incurred (7 d) + ${money(det.projected_estimate)} projected · illustrative`}
+            sub={`${money(det.incurred_estimate)} incurred (7 d) + ${money(det.projected_estimate)} projected`}
             active={tab === 'detention'} onClick={() => setTab('detention')} />
         </div>
       )}
@@ -760,6 +762,7 @@ export default function Dispatch() {
           {tab === 'schedule' && <ScheduleTab factory={factory} simTime={sim?.sim_time} freeMin={freeMin} focusTruck={focusTruck} onOpenOrder={setOrderId} />}
           {tab === 'risk' && <RiskTab factory={factory} customer={filters.customer} onOpen={setOrderId} />}
           {tab === 'detention' && <DetentionTab factory={factory} onOpen={setOrderId} />}
+          {tab === 'loss' && <LossCasesCard factory={factory} stage="dispatch" subtitle="Dock-door carton counts and weighbridge readings that do not match the manifest — trucks are held until the count reconciles" />}
           {tab === 'cctv' && (
             <Card title="Dispatch lane CCTV" subtitle="Cartons verified by label OCR before loading · people tracked with RFID identity">
               <CctvWall factory={factory} filter={(f) => f.camera.endsWith('-06') || f.camera.endsWith('-04') || f.camera.endsWith('-05')} cols={3} />

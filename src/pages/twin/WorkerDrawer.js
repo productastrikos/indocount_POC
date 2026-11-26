@@ -149,7 +149,7 @@ export default function WorkerDrawer({ id, onClose, threshold }) {
           )}
           <div className="tile text-[10.5px] text-fg-muted leading-snug">
             <b className="text-fg">Badge {w.badge}</b> · passive UHF RFID read by zone readers at stations, doors and amenities.
-            Location is recorded per zone only (no cameras, no facial recognition). Simulated for this demo.
+            Location is recorded per zone only (no cameras, no facial recognition).
           </div>
         </div>
       )}

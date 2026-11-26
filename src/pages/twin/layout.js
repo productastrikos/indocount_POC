@@ -47,8 +47,25 @@ export const rackX = (bay, rack) => RACK.x0 + ((bay - 1) * 3 + (rack - 1)) * RAC
 
 export const DOCK_Z = { D1: -22, D2: -6, D3: 10, D4: 26 };
 export const DOCK_WALL_X = 82;
+
+/* Zone D: bulk floor lanes (Gaylords) between the rack ends and the dock pads. Bay n sits in front of dock Dn
+   ("KNV-D02-LN1" = bay 2, lane 1); each lane runs toward the dock with PER_ROW floor positions, stacked up
+   to the lane's capacity (12 pallets = 4 positions × 3 high). */
+export const FLOOR = { x0: 72.6, pitch: 1.3, lanePitch: 1.4, firstDz: -3.5, perRow: 4, tierH: 1.15, size: 1.15 };
+export const floorLaneZ = (bay, lane) => (DOCK_Z[`D${bay}`] ?? 0) + FLOOR.firstDz - (lane - 1) * FLOOR.lanePitch;
+export const FLOOR_X1 = FLOOR.x0 + (FLOOR.perRow - 1) * FLOOR.pitch;
+/** Floor position of the i-th pallet (0-based) in a lane. */
+export function floorSlot(bay, lane, i) {
+  return {
+    x: FLOOR.x0 + (i % FLOOR.perRow) * FLOOR.pitch,
+    y: Math.floor(i / FLOOR.perRow) * FLOOR.tierH,
+    z: floorLaneZ(bay, lane),
+  };
+}
 export const RECV_Z = { R1: -12, R2: 8 };
 export const RECV_WALL_X = -86;
+// staff exit gate (RFID portal) in the north wall, east of the maintenance crib
+export const GATE = { x: 14, z: -49, half: 2.2, label: 'Staff exit gate' };
 
 export const ROLE_COLOR = {
   Filler: '#14b8a6', Sewer: '#ec4899', Bagger: '#f59e0b', 'Packaging operator': '#a78bfa',

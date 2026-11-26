@@ -27,6 +27,8 @@ FACTORY_WORDS = {"KNV": ("kernersville", "knv", "north carolina"), "PHX": ("phoe
 
 INTENTS = [  # (tool, patterns) — first matching rules win; several tools can match
     ("order_status", [r"\bord-?\s?\d{3}\b"]),
+    ("loss_cases", [r"pilfer", r"theft", r"steal", r"stolen", r"shrink", r"loss prevention", r"missing carton",
+                    r"\bexit gate", r"unexplained loss"]),
     ("material_runout", [r"run(ning)? out", r"runout", r"stock.?out", r"shortage", r"days? of (stock|cover)", r"material"]),
     ("supplier_delays", [r"supplier", r"vendor", r"late deliver", r"inbound delay"]),
     ("line_allocation", [r"allocat", r"best line", r"optimi[sz]", r"sequence", r"schedul(e|ing) (today|orders)", r"which line should"]),
@@ -53,7 +55,7 @@ EXAMPLES = [
     "Which line has the highest idle time?", "How many cartons failed inspection today?",
     "Which customer has the highest packaging error rate?", "Which orders are waiting for picking?",
     "Where is SKU WMT-MS-Q stored?", "Which trucks are at risk of missing their appointments?",
-    "What is our estimated detention cost this week?",
+    "What is our estimated detention cost this week?", "Are there any pilferage cases open right now?",
 ]
 
 
@@ -156,7 +158,7 @@ def answer_mock(db: Session, question: str, factory: str, now: datetime, note: s
 
 SYSTEM = """You are the operations assistant inside Indocount's Smart Factory Intelligence platform (pillow manufacturing, US plants: KNV Kernersville NC, PHX Phoenix AZ, CMH Columbus OH).
 
-Answer only from the data returned by the tools; never invent figures. Call the tools you need (several if the question spans stages), then answer in 2–5 short sentences or a compact list with the key numbers, the cause, and the recommended action. If the tools do not contain the data needed, say plainly that the data is unavailable. All data is simulated demo data; detention figures are illustrative estimates. Use the factory the user names; otherwise use the factory in the context message."""
+Answer only from the data returned by the tools; never invent figures. Call the tools you need (several if the question spans stages), then answer in 2–5 short sentences or a compact list with the key numbers, the cause, and the recommended action. If the tools do not contain the data needed, say plainly that the data is unavailable. Detention figures are estimates. Use the factory the user names; otherwise use the factory in the context message."""
 
 
 def answer_llm(db: Session, question: str, factory: str, now: datetime, history: list[dict]) -> dict:
@@ -165,7 +167,7 @@ def answer_llm(db: Session, question: str, factory: str, now: datetime, history:
     s = get_settings()
     client = anthropic.Anthropic(api_key=s.anthropic_api_key) if s.anthropic_api_key else anthropic.Anthropic()
     msgs = [{"role": h["role"], "content": h["content"]} for h in history[-6:] if h.get("role") in ("user", "assistant") and h.get("content")]
-    context = f"[Context] Selected factory: {factory or 'ALL'}. Simulated time: {now:%A %Y-%m-%d %H:%M}."
+    context = f"[Context] Selected factory: {factory or 'ALL'}. Plant time: {now:%A %Y-%m-%d %H:%M}."
     msgs.append({"role": "user", "content": f"{context}\n\n{question}"})
     tool_specs = T.anthropic_tool_specs()
     results: list[tuple[str, dict]] = []

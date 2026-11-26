@@ -135,11 +135,12 @@ def packaging_mismatch(db, now, rng, factory_id=None, line_id=None, count: int =
     made = []
     for i in range(count):
         need = sku.pillows_per_carton
-        if po.pack_queue < need:  # pillows come from the line's output buffer
-            po.pack_queue += need
-            po.completed_qty = min(po.required_qty, po.completed_qty + need) if po.completed_qty + need <= po.required_qty else po.completed_qty
         det = need - 1 if i % 3 != 2 else need + 1
-        c = quality.pack_carton(db, po, ln, now + timedelta(seconds=20 * i), det, None, "simulated", 0.96)
+        if po.pack_queue < det:  # the pillows come off the line: what is packed was made
+            short = det - po.pack_queue
+            po.pack_queue += short
+            po.completed_qty += short
+        c = quality.pack_carton(db, po, ln, now + timedelta(seconds=20 * i), det, None, "edge-vision", 0.96)
         made.append(c.hold_code)
     return f"{len(made)} mismatched cartons created on {ln.name} ({sku.code}, spec {sku.pillows_per_carton}/carton): {', '.join(made)}"
 

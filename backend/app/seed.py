@@ -232,7 +232,7 @@ def seed(db: Session, base_date: date | None = None) -> None:
         for suffix, station, li in cams:
             db.add(m.Camera(code=f"CAM-{code}-{suffix}", name=f"{station} — {lines[li].name if li is not None else 'Dispatch lane'}",
                             station=station, factory_id=f.id, line_id=lines[li].id if li is not None else None,
-                            status="Online", mode="simulated", stream_url=None))
+                            status="Online", mode="edge", stream_url=None))
         # storage locations
         for zone in "ABC":
             for bay in range(1, 5):
@@ -272,17 +272,24 @@ def seed(db: Session, base_date: date | None = None) -> None:
     db.add(m.Setting(key="changeover_standard_min", value=s.changeover_standard_minutes))
     db.add(m.Setting(key="shift2_differential", value=s.shift2_differential_usd))
     db.flush()
-    # Run the morning through the engine so today's history is consistent.
+    # Run the day so far through the engine so today's history is consistent. With a real-time clock the
+    # run goes up to the current time of day (07:00-22:30), otherwise to the configured start hour.
+    start_at = datetime.combine(today, time(s.sim_start_hour, 0))
+    if s.sim_realtime and s.sim_autostart and base_date is None:
+        wall = datetime.now().replace(second=0, microsecond=0)
+        start_at = min(max(wall, datetime.combine(today, time(7, 0))), datetime.combine(today, time(22, 30)))
     engine.FAST_MODE = True
     try:
-        engine.advance_to(db, datetime.combine(today, time(s.sim_start_hour, 0)), step_min=10)
+        engine.advance_to(db, start_at, step_min=10)
     finally:
         engine.FAST_MODE = False
     engine.PICK_BUDGET.clear()
     engine.PUTAWAY_BUDGET.clear()
     engine.PACK_BUDGET.clear()
-    from .services import alerts
-    alerts.evaluate(db, datetime.combine(today, time(s.sim_start_hour, 0)))
+    from .services import alerts, loss, procurement
+    procurement.close_short_pos(db, start_at)  # received short, nothing left to come
+    loss.ensure_baseline(db, start_at)
+    alerts.evaluate(db, start_at)
     db.commit()
 
 
@@ -559,7 +566,7 @@ def _history(db, factories, lines_by_f, skus, rng, today):
                 actual = planned * rng.uniform(perf - 0.05, perf + 0.04)
                 insp = int(actual / 10.5)
                 bad = int(insp * rng.uniform(0.002, 0.009))
-                workers = 41 + rng.randint(0, 4)
+                workers = 40 - rng.randint(0, 4)  # 40 rostered per plant and shift (8 lines x 4 + 8 support), a few absent
                 wage = 18.1 + (1 if sh == 2 else 0)
                 db.add(m.ShiftSummary(factory_id=f.id, date=day, shift=sh, planned=round(planned), actual=round(actual),
                                       planned_min=460 * 8, run_min=460 * 8 * rng.uniform(0.86, 0.94),

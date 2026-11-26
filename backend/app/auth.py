@@ -21,7 +21,7 @@ ROLES = {
     "executive": {"label": "Executive", "perms": set()},
     "plant_manager": {"label": "Plant Manager", "perms": {
         "production.write", "optimize", "maintenance.write", "quality.write", "quality.override",
-        "warehouse.write", "dispatch.write", "procurement.write", "receiving.write"}},
+        "warehouse.write", "dispatch.write", "procurement.write", "receiving.write", "security.write"}},
     "maintenance_manager": {"label": "Maintenance Manager", "perms": {"maintenance.write"}},
     "quality_supervisor": {"label": "Quality Supervisor", "perms": {"quality.write", "quality.override"}},
     "warehouse_operator": {"label": "Warehouse Operator", "perms": {"warehouse.write", "receiving.write"}},

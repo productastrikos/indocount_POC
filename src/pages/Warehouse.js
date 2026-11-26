@@ -10,6 +10,7 @@ import { useApp } from '../data/DataProvider';
 import { api, post } from '../api/client';
 import { compact, dateTime, dayTime, linkTo, num, pct } from '../utils';
 import CctvWall from '../components/cctv/CctvWall';
+import LossCasesCard from '../components/loss/LossCasesCard';
 
 const TABS = [
   { value: 'layout', label: 'Warehouse layout' },
@@ -18,6 +19,7 @@ const TABS = [
   { value: 'picking', label: 'Picking' },
   { value: 'workload', label: 'Workload & workforce' },
   { value: 'cctv', label: 'Staging CCTV' },
+  { value: 'loss', label: 'Loss prevention' },
 ];
 
 /* ─── Layout ──────────────────────────────────────────────────────────── */
@@ -98,7 +100,7 @@ function LocationDrawer({ id, onClose }) {
       subtitle={loc ? `Zone ${loc.zone} · bay ${loc.bay} · ${loc.kind === 'Floor' ? `lane ${loc.rack}` : `rack ${loc.rack} · level ${loc.level}`}` : undefined}
       headerExtra={loc && <Badge tone={loc.occupied ? (loc.occupied >= loc.capacity ? 'primary' : 'info') : 'neutral'}>{loc.occupied}/{loc.capacity} PALLETS</Badge>}
       footer={loc && <><span className="text-[10px] text-fg-faint mr-auto font-mono">Barcode {loc.barcode}</span>
-        <Button size="sm" variant="secondary" icon="scan" onClick={scanLoc}>Simulate barcode scan</Button></>}>
+        <Button size="sm" variant="secondary" icon="scan" onClick={scanLoc}>Scan location barcode</Button></>}>
       <ErrorBox error={error} />
       {loading && !data && <Loading rows={5} />}
       {data && data.pallets.length === 0 && <Empty icon="box">Empty location — available for put-away.</Empty>}
@@ -189,7 +191,7 @@ function PutawayModal({ pallet, onClose }) {
         <Step n={1} ok={skuOk} title="Verify SKU (scan carton label)">
           <div className="flex gap-2">
             <input className="input" placeholder="Scan or type SKU" value={sku} onChange={(e) => setSku(e.target.value)} />
-            <Button size="sm" variant="soft" icon="scan" onClick={() => setSku(pallet.sku)}>Simulate scan</Button>
+            <Button size="sm" variant="soft" icon="scan" onClick={() => setSku(pallet.sku)}>Scan pallet</Button>
           </div>
           {sku && !skuOk && <p className="text-[11px] text-danger mt-1">SKU mismatch — pallet record shows {pallet.sku}.</p>}
         </Step>
@@ -312,7 +314,7 @@ function LayoutTab({ onPick, selected }) {
             {data.zones.filter((z) => z.zone !== 'D').map((z) => <RackZone key={z.zone} zone={z} selected={selected} onPick={onPick} />)}
           </div>
           {data.zones.filter((z) => z.zone === 'D').map((z) => <FloorZone key={z.zone} zone={z} selected={selected} onPick={onPick} />)}
-          <p className="text-[10.5px] text-fg-faint">Racks: rows are levels (L4 at top), columns are racks R1–R3 within each bay. Occupancy is read from simulated barcode/RFID put-away records.</p>
+          <p className="text-[10.5px] text-fg-faint">Racks: rows are levels (L4 at top), columns are racks R1–R3 within each bay. Occupancy is read from barcode/RFID put-away records.</p>
         </>
       )}
     </div>
@@ -348,7 +350,7 @@ function ReceivingTab({ onPutaway, onLocation }) {
   return (
     <div className="p-4 space-y-4">
       <div className="tile">
-        <p className="label-caps mb-2 flex items-center gap-1.5"><Icon name="scan" size={12} />Scan carton, pallet or location (simulated handheld / RFID)</p>
+        <p className="label-caps mb-2 flex items-center gap-1.5"><Icon name="scan" size={12} />Scan carton, pallet or location (handheld / RFID)</p>
         <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); scan(); }}>
           <input className="input font-mono" placeholder="CTN-… / PLT-… / HOLD-… / location code" value={code} onChange={(e) => setCode(e.target.value)} />
           <Button type="submit" icon="scan" disabled={!code.trim()}>Scan</Button>
@@ -484,8 +486,8 @@ function AllocationTab({ onOrder }) {
                 { key: 'scheduled_dispatch', header: 'Ships', render: (r) => dayTime(r.scheduled_dispatch) },
                 { key: 'readiness', header: 'Readiness', render: (r) => <StatusBadge status={r.readiness.status} /> },
                 { key: 'a', header: '', render: (r) => (
-                  <Button size="sm" variant={r.pending_requirement && r.sku_unallocated ? 'primary' : 'secondary'}
-                    disabled={!can('warehouse.write') || !r.pending_requirement || !r.sku_unallocated}
+                  <Button size="sm" variant={r.from_stock ? 'primary' : 'secondary'} title={r.from_stock ? undefined : 'No free stock left for this order after earlier orders'}
+                    disabled={!can('warehouse.write') || !r.from_stock}
                     onClick={(e) => { e.stopPropagation(); allocate(r); }}>Allocate</Button>) },
               ]} />
           </div>
@@ -557,10 +559,10 @@ function WorkloadTab({ initialSku }) {
   if (loading && !data) return <div className="p-4"><Loading rows={5} /></div>;
   const w = data;
   const drivers = w ? [
-    ['Inbound shipments', w.inbound_shipments, 'shipments × 1.5 h unload & check', w.inbound_shipments * 1.5],
-    ['Put-away', w.pallets_to_putaway, 'pallets (pending + next shift output) × 5 min', w.pallets_to_putaway * 0.08],
-    ['Picking', w.cartons_to_pick, 'cartons ÷ 90 per hour', w.cartons_to_pick / 90],
-    ['Outbound loads', w.outbound_loads, 'truck loads × 1.25 h', w.outbound_loads * 1.25],
+    ['Inbound shipments', w.inbound_shipments, `at the dock (${w.inbound_at_dock}) or due in the window (${w.inbound_due}) × 1.5 h unload & check`, w.inbound_shipments * 1.5],
+    ['Put-away', w.pallets_to_putaway, `pallets waiting (${w.pallets_pending}) + line output in the window (${w.pallets_from_lines}) × 5 min`, w.pallets_to_putaway * 0.08],
+    ['Picking', w.cartons_to_pick, `reserved cartons for trucks due in the window ÷ 90 per hour (${num(w.cartons_reserved_total)} reserved in total; later trucks can be picked later)`, w.cartons_to_pick / 90],
+    ['Outbound loads', w.outbound_loads, 'truck appointments in the window × 1.25 h', w.outbound_loads * 1.25],
   ] : [];
   const gap = w ? Math.round((w.required_fte - w.deployed) * 10) / 10 : 0;
   return (
@@ -579,7 +581,7 @@ function WorkloadTab({ initialSku }) {
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="tile">
-              <p className="label-caps mb-2">Workload drivers (next 10 hours)</p>
+              <p className="label-caps mb-2">Workload drivers (next {w.window_h} hours, to {dayTime(w.window_end)})</p>
               <table className="table">
                 <thead><tr><th>Activity</th><th>Volume</th><th>Basis</th><th>Hours</th></tr></thead>
                 <tbody>{drivers.map(([a, v, basis, h]) => (
@@ -695,8 +697,9 @@ export default function Warehouse() {
             sub={`${s.stored_pallets} of ${s.capacity_pallets} pallet positions`}
             footer={<ProgressBar value={s.utilization_pct} tone={s.utilization_pct >= 90 ? 'danger' : s.utilization_pct >= 75 ? 'warning' : 'primary'} />}
             onClick={() => setTab('layout')} active={tab === 'layout'} />
-          <Kpi label="Inventory discrepancies" icon="alert" value={num(s.discrepancies)} tone={s.discrepancies ? 'warning' : 'success'}
-            sub={`${s.discrepancy_detail.override_count_cartons} override counts · ${s.discrepancy_detail.unlocated_pallets_over_2h} unlocated > 2 h`}
+          <Kpi label="Unlocated pallets > 2 h" icon="alert" value={num(s.unlocated_pallets_over_2h)} unit="pallets"
+            tone={s.unlocated_pallets_over_2h || s.overridden_cartons_stored ? 'warning' : 'success'}
+            sub={`${num(s.overridden_cartons_stored)} stored cartons with overridden counts`}
             onClick={() => setTab('receiving')} />
         </div>
       )}
@@ -709,6 +712,7 @@ export default function Warehouse() {
           {tab === 'allocation' && <AllocationTab onOrder={setOrderId} />}
           {tab === 'picking' && <PickingTab onOrder={setOrderId} />}
           {tab === 'workload' && <WorkloadTab initialSku={skuFocus} />}
+          {tab === 'loss' && <LossCasesCard bare factory={filters.factory} stage="warehouse" subtitle="Cycle-count shortages, exit-gate RFID reads of finished goods and no-badge entries into badge-only aisles" />}
           {tab === 'cctv' && (
             <div className="p-4">
               <p className="text-xs text-fg-muted mb-3">Final-inspection and carton-staging cameras: people tracked and identified by RFID badge, carton print read by OCR before put-away and loading.</p>
