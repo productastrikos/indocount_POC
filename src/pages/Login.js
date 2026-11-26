@@ -25,7 +25,7 @@ export default function Login() {
   const [backend, setBackend] = useState('checking');
 
   useEffect(() => {
-    api('/api/auth/accounts').then((u) => { setUsers(u); setBackend('ok'); }).catch(() => setBackend('down'));
+    api('/api/auth/accounts').then((u) => { if (!Array.isArray(u)) throw new Error('bad response'); setUsers(u); setBackend('ok'); }).catch(() => setBackend('down'));
   }, []);
 
   const submit = async (username, password) => {
